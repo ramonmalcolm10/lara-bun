@@ -1,5 +1,5 @@
 {
-    "name": "ramonmalcolm/lara-bun",
+    "name": "ramonmalcolm10/lara-bun",
     "description": "A Laravel-to-Bun bridge via Unix sockets",
     "type": "library",
     "keywords": [

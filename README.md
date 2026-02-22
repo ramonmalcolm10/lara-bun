@@ -11,7 +11,7 @@ A Laravel-to-Bun bridge that lets you call JavaScript/TypeScript functions from 
 ## Installation
 
 ```bash
-composer require ramonmalcolm/lara-bun
+composer require ramonmalcolm10/lara-bun
 ```
 
 The service provider and `Bun` facade are auto-discovered.
