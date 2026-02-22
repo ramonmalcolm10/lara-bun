@@ -1,0 +1,47 @@
+{
+    "name": "ramonmalcolm/lara-bun",
+    "description": "A Laravel-to-Bun bridge via Unix sockets",
+    "type": "library",
+    "keywords": [
+        "laravel",
+        "bun",
+        "javascript",
+        "typescript",
+        "unix-socket",
+        "ssr",
+        "inertia"
+    ],
+    "homepage": "https://github.com/ramonmalcolm10/lara-bun",
+    "authors": [
+        {
+            "name": "Ramon Malcolm",
+            "homepage": "https://github.com/ramonmalcolm10"
+        }
+    ],
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/console": "^11.0|^12.0"
+    },
+    "suggest": {
+        "inertiajs/inertia-laravel": "Required for Bun SSR gateway"
+    },
+    "autoload": {
+        "psr-4": {
+            "RamonMalcolm\\LaraBun\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "RamonMalcolm\\LaraBun\\BunServiceProvider"
+            ],
+            "aliases": {
+                "Bun": "RamonMalcolm\\LaraBun\\Facades\\Bun"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
