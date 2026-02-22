@@ -22,11 +22,7 @@ class BunServeCommand extends Command
             return self::FAILURE;
         }
 
-        if (! is_dir($functionsDir)) {
-            $this->error("Functions directory not found at: {$functionsDir}");
-
-            return self::FAILURE;
-        }
+        $hasFunctionsDir = is_dir($functionsDir);
 
         $bunPath = $this->findBun();
 
@@ -46,8 +42,20 @@ class BunServeCommand extends Command
             ->unique()
             ->implode(',');
 
+        if (! $hasFunctionsDir && $entryPoints === '') {
+            $this->error('Nothing to serve. Create a functions directory at: ' . $functionsDir);
+            $this->error('Or enable SSR via BUN_SSR_ENABLED=true in your .env file.');
+
+            return self::FAILURE;
+        }
+
         $this->info("Starting Bun bridge on {$socketPath}");
-        $this->line("Functions: {$functionsDir}");
+
+        if ($hasFunctionsDir) {
+            $this->line("Functions: {$functionsDir}");
+        } else {
+            $this->warn('Functions directory not found — skipping function discovery.');
+        }
 
         if ($entryPoints !== '') {
             $this->line("Entry points: {$entryPoints}");
@@ -60,8 +68,11 @@ class BunServeCommand extends Command
 
         $env = [
             'BUN_BRIDGE_SOCKET' => $socketPath,
-            'BUN_BRIDGE_FUNCTIONS_DIR' => $functionsDir,
         ];
+
+        if ($hasFunctionsDir) {
+            $env['BUN_BRIDGE_FUNCTIONS_DIR'] = $functionsDir;
+        }
 
         if ($entryPoints !== '') {
             $env['BUN_BRIDGE_ENTRY_POINTS'] = $entryPoints;

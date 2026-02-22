@@ -111,15 +111,17 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
   }
 }
 
-const functionsDir = process.env.BUN_BRIDGE_FUNCTIONS_DIR
-  ?? join(process.cwd(), "resources", "bun");
+const functionsDir = process.env.BUN_BRIDGE_FUNCTIONS_DIR;
 const socketPath = process.env.BUN_BRIDGE_SOCKET ?? "/tmp/bun-bridge.sock";
 
-await discoverFunctions(functionsDir);
+if (functionsDir) {
+  await discoverFunctions(functionsDir);
+}
+
 await loadEntryPoints();
 
 if (Object.keys(functions).length === 0) {
-  log(`No functions found in ${functionsDir}`);
+  log("No functions discovered. Provide a functions directory or entry points.");
   process.exit(1);
 }
 
