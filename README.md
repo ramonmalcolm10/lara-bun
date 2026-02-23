@@ -5,7 +5,7 @@ A Laravel-to-Bun bridge that lets you call JavaScript/TypeScript functions from 
 ## Requirements
 
 - PHP 8.2+ with the `sockets` extension
-- Laravel 11 or 12
+- Laravel 11, 12, or 13
 - [Bun](https://bun.sh) runtime
 
 ## Installation
@@ -277,6 +277,12 @@ If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/o
 2. Each worker scans your functions directory and registers all exported functions
 3. PHP communicates with Bun over Unix sockets using length-prefixed binary frames
 4. The `BunBridge` singleton maintains persistent socket connections and round-robins across workers
+
+## Support
+
+If this saved you time, consider supporting the project:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/ramonmalcolm)
 
 ## License
 
