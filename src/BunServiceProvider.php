@@ -4,7 +4,6 @@ namespace RamonMalcolm\LaraBun;
 
 use Illuminate\Support\ServiceProvider;
 use RamonMalcolm\LaraBun\Console\BunServeCommand;
-use RamonMalcolm\LaraBun\Listeners\WarmBunBridge;
 
 class BunServiceProvider extends ServiceProvider
 {
@@ -19,13 +18,6 @@ class BunServiceProvider extends ServiceProvider
     {
         if (config('bun.ssr.enabled') && interface_exists(\Inertia\Ssr\Gateway::class)) {
             $this->app->singleton(\Inertia\Ssr\Gateway::class, Ssr\BunSsrGateway::class);
-        }
-
-        if (class_exists(\Laravel\Octane\Events\WorkerStarting::class)) {
-            $this->app['events']->listen(
-                \Laravel\Octane\Events\WorkerStarting::class,
-                WarmBunBridge::class,
-            );
         }
 
         if ($this->app->runningInConsole()) {

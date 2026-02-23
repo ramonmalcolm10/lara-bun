@@ -260,19 +260,6 @@ BUN_BRIDGE_ENTRY_POINTS=dist/my-bundle.js,dist/another.js
 
 Each exported function from these files becomes callable via `BunBridge::call()`.
 
-## Laravel Octane
-
-If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/octane.php` to keep the socket connection alive across requests:
-
-```php
-'warm' => [
-    ...Octane::defaultServicesToWarm(),
-    \RamonMalcolm\LaraBun\BunBridge::class,
-],
-```
-
-When the Octane worker boots, Lara Bun automatically pings all Bun workers to warm the connections.
-
 ## How It Works
 
 1. `bun:serve` starts one or more Bun processes, each with a bundled TypeScript worker
