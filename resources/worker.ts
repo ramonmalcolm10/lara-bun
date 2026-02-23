@@ -6,10 +6,10 @@ type MessageHandler = (args: Record<string, unknown>) => unknown;
 const functions: Record<string, MessageHandler> = {};
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "shutdown";
-  requestId: string;
+  type: "ping" | "call" | "list" | "ssr";
   function?: string;
   args?: Record<string, unknown>;
+  page?: Record<string, unknown>;
 }
 
 function log(...args: unknown[]): void {
@@ -46,7 +46,7 @@ async function loadEntryPoints(): Promise<void> {
       const mod = await import(absolute);
 
       for (const [name, fn] of Object.entries(mod)) {
-        if (name === "default" || typeof fn !== "function") continue;
+        if (name === "default" || typeof fn !== "function" || name.length <= 2) continue;
 
         if (name in functions) {
           log(`Warning: duplicate function "${name}" from ${entryPath}, skipping`);
@@ -73,41 +73,53 @@ async function loadEntryPoints(): Promise<void> {
 }
 
 async function handleMessage(message: IncomingMessage): Promise<string> {
-  const { type, requestId } = message;
-
-  switch (type) {
+  switch (message.type) {
     case "ping":
-      return JSON.stringify({ type: "pong", requestId });
+      return '{"type":"pong"}';
 
     case "call": {
       const fn = functions[message.function ?? ""];
       if (!fn) {
         return JSON.stringify({
-          requestId,
           error: `Function "${message.function}" not found. Available: ${Object.keys(functions).join(", ")}`,
         });
       }
       try {
         const result = await fn(message.args ?? {});
-        return JSON.stringify({ requestId, result });
+        return JSON.stringify({ result });
       } catch (err) {
         return JSON.stringify({
-          requestId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    case "ssr": {
+      const page = message.page;
+      if (!page) {
+        return '{"error":"Missing page in SSR message"}';
+      }
+
+      const renderFn = functions["render"];
+      if (!renderFn) {
+        return '{"error":"SSR render function not found. Ensure the SSR bundle is loaded."}';
+      }
+
+      try {
+        const result = await renderFn(page);
+        return JSON.stringify({ result });
+      } catch (err) {
+        return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
         });
       }
     }
 
     case "list":
-      return JSON.stringify({ requestId, result: Object.keys(functions) });
-
-    case "shutdown":
-      log("Shutting down");
-      setTimeout(() => process.exit(0), 100);
-      return JSON.stringify({ requestId, result: "ok" });
+      return JSON.stringify({ result: Object.keys(functions) });
 
     default:
-      return JSON.stringify({ requestId, error: `Unknown message type: "${type}"` });
+      return JSON.stringify({ error: `Unknown message type: "${message.type}"` });
   }
 }
 
@@ -125,33 +137,90 @@ if (Object.keys(functions).length === 0) {
   process.exit(1);
 }
 
-// Clean up stale socket file
 try {
   unlinkSync(socketPath);
 } catch {
-  // File doesn't exist, that's fine
+  // File doesn't exist
+}
+
+type SocketLike = { write(data: string | Uint8Array): number };
+
+const pendingWriteBuffers = new Map<unknown, Buffer>();
+const socketBuffers = new Map<unknown, Buffer>();
+
+function drainSocket(socket: SocketLike): void {
+  const pending = pendingWriteBuffers.get(socket);
+  if (!pending) return;
+
+  const written = socket.write(pending);
+  if (written < pending.length) {
+    pendingWriteBuffers.set(socket, pending.subarray(written));
+  } else {
+    pendingWriteBuffers.delete(socket);
+  }
+}
+
+function writeFrame(socket: SocketLike, json: string): void {
+  const payload = Buffer.from(json, "utf-8");
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(payload.length, 0);
+
+  const frame = Buffer.concat([header, payload]);
+  const written = socket.write(frame);
+
+  if (written < frame.length) {
+    const existing = pendingWriteBuffers.get(socket) ?? Buffer.alloc(0);
+    pendingWriteBuffers.set(socket, Buffer.concat([existing, frame.subarray(written)]));
+  }
 }
 
 const server = Bun.listen({
   unix: socketPath,
   socket: {
     async data(socket, rawData) {
-      const text = Buffer.from(rawData).toString("utf-8");
-      const lines = text.split("\n").filter((l) => l.trim());
+      let buf = socketBuffers.get(socket);
+      buf = buf ? Buffer.concat([buf, Buffer.from(rawData)]) : Buffer.from(rawData);
 
-      for (const line of lines) {
+      while (buf.length >= 4) {
+        const frameLength = buf.readUInt32BE(0);
+
+        if (frameLength <= 0 || frameLength > 10 * 1024 * 1024) {
+          log("Invalid frame length:", frameLength);
+          socketBuffers.delete(socket);
+          return;
+        }
+
+        if (buf.length < 4 + frameLength) {
+          break;
+        }
+
+        const jsonBytes = buf.subarray(4, 4 + frameLength);
+        buf = buf.subarray(4 + frameLength);
+
         try {
-          const message = JSON.parse(line) as IncomingMessage;
+          const message = JSON.parse(jsonBytes.toString("utf-8")) as IncomingMessage;
           const response = await handleMessage(message);
-          socket.write(response + "\n");
+          writeFrame(socket, response);
         } catch (err) {
-          log("Failed to parse message:", line, err);
-          socket.write(JSON.stringify({ error: "Invalid JSON" }) + "\n");
+          log("Failed to parse message:", err);
+          writeFrame(socket, '{"error":"Invalid JSON"}');
         }
       }
+
+      if (buf.length > 0) {
+        socketBuffers.set(socket, buf);
+      } else {
+        socketBuffers.delete(socket);
+      }
+    },
+    drain(socket) {
+      drainSocket(socket);
     },
     open() {},
-    close() {},
+    close(socket) {
+      pendingWriteBuffers.delete(socket);
+      socketBuffers.delete(socket);
+    },
     error(_, err) {
       log("Socket error:", err.message);
     },
@@ -161,7 +230,6 @@ const server = Bun.listen({
 log(`Listening on ${socketPath}`);
 log(`Discovered ${Object.keys(functions).length} functions: ${Object.keys(functions).join(", ")}`);
 
-// Graceful shutdown
 function shutdown(signal: string): void {
   log(`Received ${signal}, shutting down`);
   server.stop();

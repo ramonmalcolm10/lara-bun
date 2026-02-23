@@ -4,7 +4,7 @@ A Laravel-to-Bun bridge that lets you call JavaScript/TypeScript functions from 
 
 ## Requirements
 
-- PHP 8.2+
+- PHP 8.2+ with the `sockets` extension
 - Laravel 11 or 12
 - [Bun](https://bun.sh) runtime
 
@@ -80,9 +80,10 @@ $isRunning = Bun::ping();
 | Method | Description |
 |--------|-------------|
 | `call(string $function, array $args = []): mixed` | Call a Bun function by name |
+| `ssr(array $page): array` | Render an Inertia page via SSR |
 | `list(): array` | List all discovered function names |
 | `ping(): bool` | Check if the Bun bridge is running |
-| `disconnect(): void` | Close the socket connection |
+| `disconnect(): void` | Close all socket connections |
 
 ## Configuration
 
@@ -98,15 +99,47 @@ This creates `config/bun.php`:
 return [
     'socket_path' => env('BUN_BRIDGE_SOCKET', '/tmp/bun-bridge.sock'),
     'functions_dir' => env('BUN_BRIDGE_FUNCTIONS_DIR', resource_path('bun')),
+    'workers' => (int) env('BUN_WORKERS', 1),
 ];
 ```
 
 | Option | Env Variable | Default | Description |
 |--------|-------------|---------|-------------|
-| `socket_path` | `BUN_BRIDGE_SOCKET` | `/tmp/bun-bridge.sock` | Path to the Unix socket |
+| `socket_path` | `BUN_BRIDGE_SOCKET` | `/tmp/bun-bridge.sock` | Base path for the Unix socket(s) |
 | `functions_dir` | `BUN_BRIDGE_FUNCTIONS_DIR` | `resources/bun` | Directory to scan for functions |
+| `workers` | `BUN_WORKERS` | `1` | Number of Bun worker processes |
 | `ssr.enabled` | `BUN_SSR_ENABLED` | `false` | Enable Bun-based Inertia SSR |
 | `entry_points` | `BUN_BRIDGE_ENTRY_POINTS` | `[]` | Comma-separated paths to additional JS/TS bundles |
+
+## Multi-Worker Support
+
+By default, Lara Bun runs a single Bun process. Under concurrent load, `renderToString()` blocks the event loop and requests queue up sequentially. Multi-worker mode spawns N independent Bun processes on separate Unix sockets, with PHP round-robining across them for parallel rendering.
+
+```env
+BUN_WORKERS=4
+```
+
+```bash
+php artisan bun:serve
+# Starting Bun bridge with 4 workers
+#   Worker 0: /tmp/bun-bridge-0.sock
+#   Worker 1: /tmp/bun-bridge-1.sock
+#   Worker 2: /tmp/bun-bridge-2.sock
+#   Worker 3: /tmp/bun-bridge-3.sock
+```
+
+Each worker is a fully isolated Bun process. If a worker crashes, it is automatically restarted. Requests that hit an unavailable worker fail over to the next one.
+
+### Socket naming
+
+| Workers | Socket path(s) |
+|---------|----------------|
+| 1 | `/tmp/bun-bridge.sock` |
+| N | `/tmp/bun-bridge-0.sock` ... `/tmp/bun-bridge-{N-1}.sock` |
+
+### Recommended workers
+
+A good starting point is matching your Octane worker count, or the number of CPU cores available for SSR rendering.
 
 ## Artisan Command
 
@@ -238,12 +271,14 @@ If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/o
 ],
 ```
 
+When the Octane worker boots, Lara Bun automatically pings all Bun workers to warm the connections.
+
 ## How It Works
 
-1. `bun:serve` starts a Bun process with a bundled TypeScript worker
-2. The worker scans your functions directory and registers all exported functions
-3. PHP communicates with Bun over a Unix socket using newline-delimited JSON
-4. The `BunBridge` singleton maintains a persistent socket connection for fast, repeated calls
+1. `bun:serve` starts one or more Bun processes, each with a bundled TypeScript worker
+2. Each worker scans your functions directory and registers all exported functions
+3. PHP communicates with Bun over Unix sockets using length-prefixed binary frames
+4. The `BunBridge` singleton maintains persistent socket connections and round-robins across workers
 
 ## License
 

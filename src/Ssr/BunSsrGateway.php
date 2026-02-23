@@ -14,18 +14,14 @@ class BunSsrGateway implements Gateway
     /**
      * Dispatch the Inertia page to the Bun SSR server.
      *
-     * @param array<string, mixed> $page
+     * @param  array<string, mixed>  $page
      */
     public function dispatch(array $page): ?Response
     {
-        if (! config('inertia.ssr.enabled', true)) {
-            return null;
-        }
-
         try {
-            $result = $this->bridge->call('render', $page);
+            $result = $this->bridge->ssr($page);
 
-            if (! is_array($result) || ! isset($result['head'], $result['body'])) {
+            if (! isset($result['head'], $result['body'])) {
                 return null;
             }
 
@@ -33,7 +29,9 @@ class BunSsrGateway implements Gateway
                 implode("\n", $result['head']),
                 $result['body'],
             );
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            report($e);
+
             return null;
         }
     }
