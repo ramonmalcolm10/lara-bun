@@ -271,6 +271,26 @@ If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/o
 ],
 ```
 
+## Performance
+
+Benchmarked against Inertia's default HTTP SSR (`php artisan inertia:start-ssr --runtime=bun`) with 100 iterations, no warmup:
+
+| | Avg | Min | Max | PHP Memory |
+|---|---|---|---|---|
+| **Lara Bun (Unix Socket)** | **2.39ms** | **1.73ms** | **4.75ms** | +0MB |
+| Inertia HTTP SSR (Bun) | 3.36ms | 2.32ms | 19.47ms | +12.5MB |
+
+**~30% faster** with zero additional PHP memory overhead. Unix sockets skip the TCP stack entirely — communication is just memory copies in the kernel.
+
+### Worker memory
+
+Each Bun worker uses **~10MB RSS** under load. Memory plateaus at ~10MB under load, then GC kicks in and drops it back down to ~3MB. No memory leak — Bun's JavaScriptCore garbage collector is cleaning up properly. After 16,000 SSR renders the process is using less memory than when it started.
+
+| Workers | Memory |
+|---|---|
+| 1 | ~10MB |
+| 4 | ~40MB |
+
 ## How It Works
 
 1. `bun:serve` starts one or more Bun processes, each with a bundled TypeScript worker
