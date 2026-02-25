@@ -12,6 +12,7 @@ interface IncomingMessage {
   page?: Record<string, unknown>;
   component?: string;
   props?: Record<string, unknown>;
+  callbackSocket?: string;
 }
 
 function log(...args: unknown[]): void {
@@ -127,7 +128,8 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       try {
         const result = await rscHandler.handleRsc(
           message.component,
-          message.props ?? {}
+          message.props ?? {},
+          message.callbackSocket ?? null
         );
         return JSON.stringify({ result });
       } catch (err) {
@@ -158,7 +160,8 @@ await loadEntryPoints();
 type RscHandlerModule = {
   handleRsc: (
     component: string,
-    props: Record<string, unknown>
+    props: Record<string, unknown>,
+    callbackSocket?: string | null
   ) => Promise<{ body: string; rscPayload: string; clientChunks: string[] }>;
 };
 

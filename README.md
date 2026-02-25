@@ -81,7 +81,7 @@ $isRunning = Bun::ping();
 |--------|-------------|
 | `call(string $function, array $args = []): mixed` | Call a Bun function by name |
 | `ssr(array $page): array` | Render an Inertia page via SSR |
-| `rsc(string $component, array $props = []): array` | Render a React Server Component to HTML |
+| `rsc(string $component, array $props = []): array` | Render a React Server Component to HTML. Returns `{body, rscPayload, clientChunks}` |
 | `list(): array` | List all discovered function names |
 | `ping(): bool` | Check if the Bun bridge is running |
 | `disconnect(): void` | Close all socket connections |
@@ -113,6 +113,9 @@ return [
 | `rsc.enabled` | `BUN_RSC_ENABLED` | `false` | Enable React Server Components rendering |
 | `rsc.bundle` | `BUN_RSC_BUNDLE` | `bootstrap/rsc/entry.rsc.js` | Path to the pre-built RSC bundle |
 | `rsc.source_dir` | `BUN_RSC_SOURCE_DIR` | `resources/js/rsc` | Directory containing RSC component files |
+| `rsc.callables` | — | `[]` | Explicit mapping of names to PHP callables for `php()` |
+| `rsc.callables_dir` | — | `null` | Directory to auto-discover PHP callables from |
+| `rsc.callback_timeout` | — | `5` | Timeout in seconds for callback socket operations |
 | `entry_points` | `BUN_BRIDGE_ENTRY_POINTS` | `[]` | Comma-separated paths to additional JS/TS bundles |
 
 ## Multi-Worker Support
@@ -335,6 +338,138 @@ PHP: $bridge->rsc('Component', $props)
 ```
 
 The Flight protocol serializes the React component tree (including async components) into a streamable format. The handler deserializes it back into React elements and renders them to HTML. Both the rendered HTML and the raw Flight payload are returned, allowing you to use the HTML directly or hydrate on the client if needed.
+
+### Client components (`"use client"`)
+
+Server components are non-interactive by default. To add interactivity, create a component with `"use client"` at the top and import it from a server component:
+
+```tsx
+// resources/js/rsc/Counter.tsx — client component
+"use client";
+
+import { useState } from "react";
+
+export default function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>;
+}
+```
+
+```tsx
+// resources/js/rsc/Dashboard.tsx — server component
+import Counter from "./Counter";
+
+export default async function Dashboard() {
+  return (
+    <div>
+      <h1>Dashboard</h1>
+      <Counter />
+    </div>
+  );
+}
+```
+
+The build script (`build-rsc.ts`) automatically detects `"use client"` files and generates:
+- **Server bundle** — client imports become Flight-serializable proxies
+- **SSR bundles** — for server-side HTML rendering of client components
+- **Browser bundles** — for client-side hydration
+
+### Hydrating client components
+
+Use the `@rscScripts` Blade directive to inject the hydration scripts:
+
+```blade
+<div id="rsc-root">{!! $body !!}</div>
+
+@rscScripts($rscPayload, $clientChunks)
+```
+
+The directive renders the Flight payload and module script tags needed for `react-server-dom-webpack` to hydrate client component boundaries in the browser.
+
+### Calling PHP from server components (`php()`)
+
+Server components can call PHP functions directly during rendering — no HTTP requests needed. Calls go over a dedicated Unix socket back to the PHP process, execute Eloquent queries or service methods, and return results inline.
+
+#### 1. Register callables
+
+**Option A: Explicit mapping** in `config/bun.php`:
+
+```php
+'rsc' => [
+    'callables' => [
+        'getUser' => [App\Rsc\Callables\UserCallable::class, 'getUser'],
+        'getPosts' => App\Rsc\Callables\PostCallable::class, // invokable
+    ],
+],
+```
+
+**Option B: Auto-discover from a directory:**
+
+```php
+'rsc' => [
+    'callables_dir' => app_path('Rsc/Callables'),
+],
+```
+
+Auto-discovered names follow the pattern `ClassName.methodName`. For example, a class `UserCallable` with a `getUser` method becomes callable as `UserCallable.getUser`. Invokable classes (`__invoke`) are registered as just `ClassName`. Explicit registrations take precedence.
+
+#### 2. Create a callable class
+
+```php
+// app/Rsc/Callables/UserCallable.php
+namespace App\Rsc\Callables;
+
+use App\Models\User;
+
+class UserCallable
+{
+    public function getUser(array $args): array
+    {
+        return User::findOrFail($args['id'])->toArray();
+    }
+}
+```
+
+Callables are resolved through the container, so constructor injection works.
+
+#### 3. Call from a server component
+
+```tsx
+// resources/js/rsc/Dashboard.tsx
+export default async function Dashboard({ userId }: { userId: number }) {
+  const user = await php('UserCallable.getUser', { id: userId });
+  return <div>{user.name}</div>;
+}
+```
+
+The `php()` function is available as a global during RSC rendering. Add the type reference for editor support:
+
+```tsx
+/// <reference path="../../../vendor/ramonmalcolm10/lara-bun/resources/php.d.ts" />
+```
+
+#### How callbacks work
+
+```
+PHP                                          Bun
+────                                         ────
+1. Create temp callback socket
+   /tmp/rsc-cb-{random}.sock
+
+2. Send RSC request with callbackSocket ───> Receive request, connect to callback socket
+
+3. socket_select() loop                      Component calls php('getUser', {id:1})
+   monitoring main + callback sockets  <──── Send callback request on callback socket
+   Execute PHP callable via registry
+   Send response back on callback    ──────> Receive response, resume rendering
+
+   ... repeat for more callbacks ...
+
+4. select() fires on main socket     <────── Render complete, send final result
+   Return {body, rscPayload, clientChunks}
+```
+
+Each render creates a unique callback socket path, so concurrent Octane requests don't interfere. Both sides clean up sockets in `finally` blocks.
 
 ## Laravel Octane
 

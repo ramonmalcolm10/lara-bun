@@ -2,6 +2,7 @@
 
 namespace RamonMalcolm\LaraBun;
 
+use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
 use RuntimeException;
 use Socket;
 
@@ -80,6 +81,12 @@ class BunBridge
      */
     public function rsc(string $component, array $props = []): array
     {
+        $registry = app(CallableRegistry::class);
+
+        if ($registry->hasCallables()) {
+            return $this->rscWithCallbacks($component, $props, $registry);
+        }
+
         $response = $this->send(json_encode([
             'type' => 'rsc',
             'component' => $component,
@@ -134,6 +141,233 @@ class BunBridge
     }
 
     /**
+     * @return array{body: string, rscPayload: string, clientChunks: string[]}
+     */
+    private function rscWithCallbacks(string $component, array $props, CallableRegistry $registry): array
+    {
+        $callbackPath = '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock';
+        $callbackServer = null;
+        $callbackClient = null;
+
+        try {
+            $callbackServer = socket_create(AF_UNIX, SOCK_STREAM, 0);
+
+            if ($callbackServer === false) {
+                throw new RuntimeException('Failed to create callback socket: '.socket_strerror(socket_last_error()));
+            }
+
+            if (! socket_bind($callbackServer, $callbackPath)) {
+                throw new RuntimeException('Failed to bind callback socket: '.socket_strerror(socket_last_error($callbackServer)));
+            }
+
+            if (! socket_listen($callbackServer, 1)) {
+                throw new RuntimeException('Failed to listen on callback socket: '.socket_strerror(socket_last_error($callbackServer)));
+            }
+
+            socket_set_nonblock($callbackServer);
+
+            // Send RSC request with callback socket path
+            $mainSocket = $this->getSocket($this->currentWorker++ % $this->workerCount);
+
+            $this->writeFrame($mainSocket, json_encode([
+                'type' => 'rsc',
+                'component' => $component,
+                'props' => $props,
+                'callbackSocket' => $callbackPath,
+            ], JSON_THROW_ON_ERROR));
+
+            // Enter select loop monitoring main + callback sockets
+            $timeout = (int) config('bun.rsc.callback_timeout', 5);
+            $callbackBuffer = '';
+
+            while (true) {
+                $read = [$mainSocket];
+
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
+                }
+
+                if ($callbackClient !== null) {
+                    $read[] = $callbackClient;
+                }
+
+                $write = [];
+                $except = [];
+                $changed = socket_select($read, $write, $except, $timeout);
+
+                if ($changed === false) {
+                    throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
+                }
+
+                if ($changed === 0) {
+                    throw new RuntimeException("RSC callback timed out after {$timeout} seconds");
+                }
+
+                // Accept new callback connection
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        // Close the listener — we only need one connection
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+
+                // Handle callback data from Bun
+                if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
+                    $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
+                }
+
+                // Check for final response on main socket
+                if (in_array($mainSocket, $read, true)) {
+                    $response = $this->readFrame($mainSocket);
+
+                    if (isset($response['error'])) {
+                        throw new RuntimeException("Bun RSC error: {$response['error']}");
+                    }
+
+                    if (! isset($response['result']) || ! is_array($response['result'])) {
+                        throw new RuntimeException('Invalid RSC response from Bun');
+                    }
+
+                    return $response['result'];
+                }
+            }
+        } finally {
+            if ($callbackClient !== null) {
+                socket_close($callbackClient);
+            }
+
+            if ($callbackServer !== null) {
+                socket_close($callbackServer);
+            }
+
+            if (file_exists($callbackPath)) {
+                @unlink($callbackPath);
+            }
+        }
+    }
+
+    private function handleCallbackData(Socket $socket, string &$buffer, CallableRegistry $registry): void
+    {
+        $chunk = @socket_read($socket, 65536, PHP_BINARY_READ);
+
+        if ($chunk === false || $chunk === '') {
+            return;
+        }
+
+        $buffer .= $chunk;
+
+        while (strlen($buffer) >= 4) {
+            $frameLength = unpack('N', substr($buffer, 0, 4))[1];
+
+            if ($frameLength <= 0 || $frameLength > 10 * 1024 * 1024) {
+                $buffer = '';
+
+                return;
+            }
+
+            if (strlen($buffer) < 4 + $frameLength) {
+                return;
+            }
+
+            $json = substr($buffer, 4, $frameLength);
+            $buffer = substr($buffer, 4 + $frameLength);
+
+            $request = json_decode($json, true);
+
+            if (! is_array($request) || ($request['type'] ?? '') !== 'callback') {
+                continue;
+            }
+
+            $id = $request['id'] ?? '';
+            $function = $request['function'] ?? '';
+            $args = $request['args'] ?? [];
+
+            try {
+                $result = $registry->execute($function, $args);
+                $response = json_encode(['id' => $id, 'result' => $result], JSON_THROW_ON_ERROR);
+            } catch (\Throwable $e) {
+                $response = json_encode(['id' => $id, 'error' => $e->getMessage()], JSON_THROW_ON_ERROR);
+            }
+
+            $this->writeFrame($socket, $response);
+        }
+    }
+
+    private function writeFrame(Socket $socket, string $json): void
+    {
+        $frame = pack('N', strlen($json)).$json;
+        $frameLen = strlen($frame);
+        $written = socket_write($socket, $frame, $frameLen);
+
+        if ($written === false || $written === 0) {
+            throw new RuntimeException('Failed to write to socket');
+        }
+
+        if ($written < $frameLen) {
+            $offset = $written;
+            $remaining = $frameLen - $written;
+
+            while ($remaining > 0) {
+                $written = socket_write($socket, substr($frame, $offset), $remaining);
+
+                if ($written === false || $written === 0) {
+                    throw new RuntimeException('Failed to write to socket');
+                }
+
+                $offset += $written;
+                $remaining -= $written;
+            }
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function readFrame(Socket $socket): array
+    {
+        $header = socket_read($socket, 4, PHP_BINARY_READ);
+
+        if ($header === false || strlen($header) < 4) {
+            throw new RuntimeException('Failed to read from socket');
+        }
+
+        $length = unpack('N', $header)[1];
+
+        if ($length <= 0 || $length > 10 * 1024 * 1024) {
+            throw new RuntimeException('Invalid frame length from socket');
+        }
+
+        $body = socket_read($socket, $length, PHP_BINARY_READ);
+
+        if ($body === false || $body === '') {
+            throw new RuntimeException('Failed to read from socket');
+        }
+
+        while (strlen($body) < $length) {
+            $chunk = socket_read($socket, $length - strlen($body), PHP_BINARY_READ);
+
+            if ($chunk === false || $chunk === '') {
+                throw new RuntimeException('Failed to read from socket');
+            }
+
+            $body .= $chunk;
+        }
+
+        $data = json_decode($body, true);
+
+        if (! is_array($data)) {
+            throw new RuntimeException('Invalid JSON response from socket');
+        }
+
+        return $data;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function send(string $json): array
@@ -160,76 +394,14 @@ class BunBridge
     {
         $socket = $this->getSocket($index);
 
-        // Write length-prefixed frame
-        $frame = pack('N', strlen($json)).$json;
-        $frameLen = strlen($frame);
-        $written = socket_write($socket, $frame, $frameLen);
+        $this->writeFrame($socket, $json);
 
-        if ($written === false || $written === 0) {
+        try {
+            return $this->readFrame($socket);
+        } catch (RuntimeException $e) {
             $this->closeSocket($index);
-            throw new RuntimeException('Failed to write to Bun socket');
+            throw $e;
         }
-
-        if ($written < $frameLen) {
-            $offset = $written;
-            $remaining = $frameLen - $written;
-
-            while ($remaining > 0) {
-                $written = socket_write($socket, substr($frame, $offset), $remaining);
-
-                if ($written === false || $written === 0) {
-                    $this->closeSocket($index);
-                    throw new RuntimeException('Failed to write to Bun socket');
-                }
-
-                $offset += $written;
-                $remaining -= $written;
-            }
-        }
-
-        // Read 4-byte length header
-        $header = socket_read($socket, 4, PHP_BINARY_READ);
-
-        if ($header === false || strlen($header) < 4) {
-            $this->closeSocket($index);
-            throw new RuntimeException('Failed to read from Bun socket');
-        }
-
-        $length = unpack('N', $header)[1];
-
-        if ($length <= 0 || $length > 10 * 1024 * 1024) {
-            $this->closeSocket($index);
-            throw new RuntimeException('Invalid frame length from Bun socket');
-        }
-
-        // Read response body
-        $body = socket_read($socket, $length, PHP_BINARY_READ);
-
-        if ($body === false || $body === '') {
-            $this->closeSocket($index);
-            throw new RuntimeException('Failed to read from Bun socket');
-        }
-
-        // Handle partial read for large responses
-        while (strlen($body) < $length) {
-            $chunk = socket_read($socket, $length - strlen($body), PHP_BINARY_READ);
-
-            if ($chunk === false || $chunk === '') {
-                $this->closeSocket($index);
-                throw new RuntimeException('Failed to read from Bun socket');
-            }
-
-            $body .= $chunk;
-        }
-
-        $data = json_decode($body, true);
-
-        if (! is_array($data)) {
-            $this->closeSocket($index);
-            throw new RuntimeException('Invalid JSON response from Bun socket');
-        }
-
-        return $data;
     }
 
     private function getSocket(int $index): Socket

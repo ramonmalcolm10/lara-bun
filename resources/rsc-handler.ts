@@ -2,6 +2,7 @@ import { createFromReadableStream } from "react-server-dom-webpack/client.edge";
 import { renderToReadableStream } from "react-dom/server";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { connectCallback, disconnectCallback, php } from "./php-callback";
 
 const bundlePath = process.env.BUN_RSC_BUNDLE;
 
@@ -108,35 +109,49 @@ const emptyManifest = {
 
 export async function handleRsc(
   component: string,
-  props: Record<string, unknown>
+  props: Record<string, unknown>,
+  callbackSocket?: string | null
 ): Promise<{ body: string; rscPayload: string; clientChunks: string[] }> {
-  // Step 1: Render component to RSC Flight payload
-  const rscPayload: string = clientManifest
-    ? await rscModule.renderRsc(component, props, clientManifest)
-    : await rscModule.renderRsc(component, props);
+  // Connect to PHP callback socket if provided
+  if (callbackSocket) {
+    await connectCallback(callbackSocket);
+    (globalThis as any).php = php;
+  }
 
-  // Step 2: Deserialize Flight payload into React element tree
-  const flightStream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(rscPayload));
-      controller.close();
-    },
-  });
+  try {
+    // Step 1: Render component to RSC Flight payload
+    const rscPayload: string = clientManifest
+      ? await rscModule.renderRsc(component, props, clientManifest)
+      : await rscModule.renderRsc(component, props);
 
-  const consumerManifest = ssrManifest
-    ? { serverConsumerManifest: ssrManifest }
-    : emptyManifest;
+    // Step 2: Deserialize Flight payload into React element tree
+    const flightStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(rscPayload));
+        controller.close();
+      },
+    });
 
-  const reactTree = await createFromReadableStream(
-    flightStream,
-    consumerManifest
-  );
+    const consumerManifest = ssrManifest
+      ? { serverConsumerManifest: ssrManifest }
+      : emptyManifest;
 
-  // Step 3: Render React elements to HTML
-  const htmlStream = await renderToReadableStream(reactTree);
-  await htmlStream.allReady;
+    const reactTree = await createFromReadableStream(
+      flightStream,
+      consumerManifest
+    );
 
-  const body = await new Response(htmlStream).text();
+    // Step 3: Render React elements to HTML
+    const htmlStream = await renderToReadableStream(reactTree);
+    await htmlStream.allReady;
 
-  return { body, rscPayload, clientChunks: browserChunks };
+    const body = await new Response(htmlStream).text();
+
+    return { body, rscPayload, clientChunks: browserChunks };
+  } finally {
+    if (callbackSocket) {
+      disconnectCallback();
+      delete (globalThis as any).php;
+    }
+  }
 }

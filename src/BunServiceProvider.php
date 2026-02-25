@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\HtmlString;
 use Illuminate\Support\ServiceProvider;
 use RamonMalcolm\LaraBun\Console\BunServeCommand;
+use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
 
 class BunServiceProvider extends ServiceProvider
 {
@@ -14,6 +15,22 @@ class BunServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/bun.php', 'bun');
 
         $this->app->singleton(BunBridge::class);
+
+        $this->app->singleton(CallableRegistry::class, function ($app) {
+            $registry = new CallableRegistry($app);
+
+            foreach (config('bun.rsc.callables', []) as $name => $callable) {
+                $registry->register($name, $callable);
+            }
+
+            $callablesDir = config('bun.rsc.callables_dir');
+
+            if ($callablesDir !== null) {
+                $registry->discoverFrom($callablesDir);
+            }
+
+            return $registry;
+        });
     }
 
     public function boot(): void
