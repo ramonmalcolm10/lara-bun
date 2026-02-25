@@ -159,7 +159,7 @@ type RscHandlerModule = {
   handleRsc: (
     component: string,
     props: Record<string, unknown>
-  ) => Promise<{ body: string; rscPayload: string }>;
+  ) => Promise<{ body: string; rscPayload: string; clientChunks: string[] }>;
 };
 
 let rscHandler: RscHandlerModule | null = null;

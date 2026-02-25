@@ -1,5 +1,6 @@
 /**
- * Auto-discovers React Server Components and builds the RSC bundle.
+ * Auto-discovers React Server Components, detects "use client" files,
+ * and builds server + SSR + browser bundles with manifest generation.
  *
  * Usage:
  *   bun <this-script> [source-dir] [out-dir]
@@ -9,15 +10,38 @@
  *   out-dir:    bootstrap/rsc
  */
 
-import { join, basename } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { join, basename, resolve } from "node:path";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import type { BunPlugin } from "bun";
 
 const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js/rsc");
 const outDir = process.argv[3] ?? join(process.cwd(), "bootstrap/rsc");
+const clientOutDir = join(outDir, "client");
+const browserOutDir = join(process.cwd(), "public/build/rsc");
 
 const glob = new Bun.Glob("**/*.{tsx,ts,jsx,js}");
-const components: { name: string; importAlias: string; relativePath: string }[] = [];
+
+interface ComponentInfo {
+  name: string;
+  importAlias: string;
+  relativePath: string;
+  absolutePath: string;
+  isClient: boolean;
+}
+
+const serverComponents: ComponentInfo[] = [];
+const clientComponents: ComponentInfo[] = [];
 let aliasIndex = 0;
+
+function isClientFile(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const firstLine = content.split("\n")[0].trim();
+    return firstLine === '"use client";' || firstLine === "'use client';";
+  } catch {
+    return false;
+  }
+}
 
 for await (const path of glob.scan(sourceDir)) {
   if (
@@ -30,38 +54,105 @@ for await (const path of glob.scan(sourceDir)) {
   }
 
   const name = basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
-  components.push({ name, importAlias: `_C${aliasIndex++}`, relativePath: `./${path}` });
+  const absolutePath = resolve(sourceDir, path);
+  const info: ComponentInfo = {
+    name,
+    importAlias: `_C${aliasIndex++}`,
+    relativePath: `./${path}`,
+    absolutePath,
+    isClient: isClientFile(absolutePath),
+  };
+
+  if (info.isClient) {
+    clientComponents.push(info);
+  } else {
+    serverComponents.push(info);
+  }
 }
 
-if (components.length === 0) {
+const allComponents = [...serverComponents, ...clientComponents];
+
+if (allComponents.length === 0) {
   console.error(`No RSC components found in: ${sourceDir}`);
   console.error("Create component files (e.g. Dashboard.tsx or user-profile.tsx)");
   process.exit(1);
 }
 
-console.log(`Found ${components.length} component(s):`);
-components.forEach((c) => console.log(`  ${c.name} ← ${c.relativePath}`));
+console.log(`Found ${serverComponents.length} server component(s):`);
+serverComponents.forEach((c) => console.log(`  ${c.name} ← ${c.relativePath}`));
 
-const imports = components
-  .map((c) => `import ${c.importAlias} from "${c.relativePath}";`)
+if (clientComponents.length > 0) {
+  console.log(`Found ${clientComponents.length} client component(s):`);
+  clientComponents.forEach((c) => console.log(`  ${c.name} ← ${c.relativePath}`));
+}
+
+// Build a set of absolute paths for client files (for the plugin to intercept)
+const clientAbsolutePaths = new Set(clientComponents.map((c) => c.absolutePath));
+
+// Map from moduleId (used in manifests) to component info
+// moduleId is the relative path like "./Counter.tsx"
+const clientModuleIds = new Map<string, ComponentInfo>();
+for (const c of clientComponents) {
+  clientModuleIds.set(c.relativePath, c);
+}
+
+// ─── Server Build ───────────────────────────────────────────────────────────
+
+// Plugin that intercepts imports of "use client" files and replaces them
+// with client module proxies for Flight serialization
+const useClientPlugin: BunPlugin = {
+  name: "use-client-proxy",
+  setup(build) {
+    // Create a filter that matches absolute paths of client components
+    for (const absPath of clientAbsolutePaths) {
+      const escaped = absPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      build.onLoad({ filter: new RegExp(`^${escaped}$`) }, (args) => {
+        // Find the component info for this path
+        const comp = clientComponents.find((c) => c.absolutePath === args.path);
+        if (!comp) return undefined;
+
+        const moduleId = comp.relativePath;
+        return {
+          contents: `
+import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";
+export default createClientModuleProxy("${moduleId}");
+`,
+          loader: "js",
+        };
+      });
+    }
+  },
+};
+
+// Generate server entry that imports all components (client ones will be proxied)
+const serverImports = allComponents
+  .map((c) => `import ${c.importAlias} from "${c.absolutePath}";`)
   .join("\n");
 
-const componentMap = components
+const serverComponentMap = allComponents
   .map((c) => `  "${c.name}": ${c.importAlias},`)
   .join("\n");
+
+const clientManifestParam =
+  clientComponents.length > 0
+    ? "clientManifest: Record<string, unknown>"
+    : "";
+const clientManifestArg =
+  clientComponents.length > 0 ? "clientManifest" : "null";
 
 const entrySource = `// Auto-generated by lara-bun build-rsc — do not edit
 import { renderToReadableStream } from "react-server-dom-webpack/server.edge";
 import { createElement } from "react";
-${imports}
+${serverImports}
 
 const components: Record<string, React.ComponentType<any>> = {
-${componentMap}
+${serverComponentMap}
 };
 
 export async function renderRsc(
   component: string,
-  props: Record<string, unknown>
+  props: Record<string, unknown>,
+  ${clientManifestParam}
 ): Promise<string> {
   const Component = components[component];
 
@@ -72,29 +163,198 @@ export async function renderRsc(
   }
 
   const element = createElement(Component, props);
-  const stream = renderToReadableStream(element, null);
+  const stream = renderToReadableStream(element, ${clientManifestArg});
 
   return await new Response(stream).text();
 }
 `;
 
-const entryPath = join(sourceDir, "entry.rsc.tsx");
+mkdirSync(outDir, { recursive: true });
+
+const entryPath = join(outDir, "entry.rsc.tsx");
 writeFileSync(entryPath, entrySource);
 console.log(`Generated: ${entryPath}`);
 
-mkdirSync(outDir, { recursive: true });
-
-const result = await Bun.build({
+const serverResult = await Bun.build({
   entrypoints: [entryPath],
   outdir: outDir,
   target: "bun",
   conditions: ["react-server"],
+  plugins: clientComponents.length > 0 ? [useClientPlugin] : [],
 });
 
-if (!result.success) {
-  console.error("Build failed:");
-  result.logs.forEach((log) => console.error(log));
+if (!serverResult.success) {
+  console.error("Server build failed:");
+  serverResult.logs.forEach((log) => console.error(log));
   process.exit(1);
 }
 
-console.log(`Built: ${join(outDir, "entry.rsc.js")}`);
+console.log(`Built server bundle: ${join(outDir, "entry.rsc.js")}`);
+
+// ─── Client Builds + Manifests ──────────────────────────────────────────────
+
+if (clientComponents.length === 0) {
+  console.log("No client components — skipping client builds and manifests.");
+  process.exit(0);
+}
+
+// a) SSR client build — builds client components for server-side HTML rendering
+mkdirSync(clientOutDir, { recursive: true });
+
+const ssrResult = await Bun.build({
+  entrypoints: clientComponents.map((c) => c.absolutePath),
+  outdir: clientOutDir,
+  target: "bun",
+  naming: "[name].[ext]",
+  external: ["react", "react-dom"],
+});
+
+if (!ssrResult.success) {
+  console.error("SSR client build failed:");
+  ssrResult.logs.forEach((log) => console.error(log));
+  process.exit(1);
+}
+
+console.log(`Built SSR client bundles: ${clientOutDir}/`);
+
+// b) Browser client build — builds client components + hydration entry for browser
+mkdirSync(browserOutDir, { recursive: true });
+
+// Generate a hydration entry that imports all client components and bootstraps hydration
+const hydrateImports = clientComponents
+  .map(
+    (c, i) =>
+      `import * as _M${i} from "${c.absolutePath}";`
+  )
+  .join("\n");
+
+const hydrateModuleMap = clientComponents
+  .map((c, i) => `  "${c.relativePath}": _M${i},`)
+  .join("\n");
+
+const hydrateEntrySource = `// Auto-generated hydration entry — do not edit
+// __webpack_require__ and __webpack_chunk_load__ are pre-defined in the
+// inline <script> block in rsc.blade.php so they exist before this ES module
+// initializes (ES module imports are hoisted above module body code).
+import { createFromReadableStream } from "react-server-dom-webpack/client.browser";
+import { hydrateRoot } from "react-dom/client";
+${hydrateImports}
+
+// Populate the module map that __webpack_require__ reads from
+const w = window as any;
+${clientComponents.map((c, i) => `w.__RSC_MODULES__["${c.relativePath}"] = _M${i};`).join("\n")}
+
+const rscPayload = w.__RSC_PAYLOAD__;
+if (rscPayload) {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(rscPayload));
+      controller.close();
+    },
+  });
+
+  const root = createFromReadableStream(stream, {
+    callServer: async () => { throw new Error("Server actions not supported"); },
+  });
+
+  Promise.resolve(root).then((reactTree: any) => {
+    const container = document.getElementById("rsc-root");
+    if (container) {
+      hydrateRoot(container, reactTree);
+    }
+  });
+}
+`;
+
+const hydrateEntryPath = join(outDir, "entry.hydrate.tsx");
+writeFileSync(hydrateEntryPath, hydrateEntrySource);
+
+const browserResult = await Bun.build({
+  entrypoints: [hydrateEntryPath],
+  outdir: browserOutDir,
+  target: "browser",
+  format: "esm",
+  splitting: true,
+  minify: true,
+  naming: "[name]-[hash].[ext]",
+});
+
+if (!browserResult.success) {
+  console.error("Browser client build failed:");
+  browserResult.logs.forEach((log) => console.error(log));
+  process.exit(1);
+}
+
+// Collect browser output file paths (relative to public/)
+const browserChunks: string[] = [];
+for (const output of browserResult.outputs) {
+  const relativePath = output.path.replace(
+    join(process.cwd(), "public"),
+    ""
+  );
+  browserChunks.push(relativePath);
+}
+
+console.log(`Built browser bundles: ${browserOutDir}/`);
+browserChunks.forEach((c) => console.log(`  ${c}`));
+
+// c) Generate manifests
+
+// Client manifest — used by server during Flight serialization
+// Maps moduleId -> { id, chunks, name }
+// The moduleId matches what createClientModuleProxy was called with
+// The id is what __webpack_require__ will be called with on the SSR/browser side
+const clientManifest: Record<
+  string,
+  { id: string; chunks: string[]; name: string }
+> = {};
+
+for (const c of clientComponents) {
+  clientManifest[c.relativePath] = {
+    id: c.relativePath,
+    chunks: [],
+    name: "default",
+  };
+}
+
+writeFileSync(
+  join(outDir, "client-manifest.json"),
+  JSON.stringify(clientManifest, null, 2)
+);
+console.log(`Generated: ${join(outDir, "client-manifest.json")}`);
+
+// SSR manifest — used by rsc-handler during createFromReadableStream
+// Structure: { moduleMap: { [moduleId]: { [exportName]: { id, chunks, name } } }, moduleLoading, serverModuleMap }
+const ssrModuleMap: Record<
+  string,
+  Record<string, { id: string; chunks: string[]; name: string }>
+> = {};
+
+for (const c of clientComponents) {
+  ssrModuleMap[c.relativePath] = {
+    "default": {
+      id: c.relativePath,
+      chunks: [],
+      name: "default",
+    },
+  };
+}
+
+const ssrManifest = {
+  moduleMap: ssrModuleMap,
+  moduleLoading: null,
+  serverModuleMap: {},
+};
+
+writeFileSync(
+  join(outDir, "ssr-manifest.json"),
+  JSON.stringify(ssrManifest, null, 2)
+);
+console.log(`Generated: ${join(outDir, "ssr-manifest.json")}`);
+
+// Browser chunks manifest — used by PHP to inject script tags
+writeFileSync(
+  join(outDir, "browser-chunks.json"),
+  JSON.stringify(browserChunks, null, 2)
+);
+console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);

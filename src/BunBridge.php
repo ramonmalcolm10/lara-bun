@@ -76,7 +76,7 @@ class BunBridge
     }
 
     /**
-     * @return array{body: string, rscPayload: string}
+     * @return array{body: string, rscPayload: string, clientChunks: string[]}
      */
     public function rsc(string $component, array $props = []): array
     {

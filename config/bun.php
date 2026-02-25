@@ -13,6 +13,7 @@ return [
         'enabled' => env('BUN_RSC_ENABLED', false),
         'bundle' => env('BUN_RSC_BUNDLE', base_path('bootstrap/rsc/entry.rsc.js')),
         'source_dir' => env('BUN_RSC_SOURCE_DIR', resource_path('js/rsc')),
+        'client_build_dir' => env('BUN_RSC_CLIENT_BUILD_DIR', public_path('build/rsc')),
     ],
 
     'entry_points' => array_filter(
