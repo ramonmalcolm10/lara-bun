@@ -2,7 +2,7 @@ import { createFromReadableStream } from "react-server-dom-webpack/client.edge";
 import { renderToReadableStream } from "react-dom/server";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { connectCallback, disconnectCallback, php } from "./php-callback";
+import { PhpCallbackClient } from "./php-callback";
 
 const bundlePath = process.env.BUN_RSC_BUNDLE;
 
@@ -112,10 +112,13 @@ export async function handleRsc(
   props: Record<string, unknown>,
   callbackSocket?: string | null
 ): Promise<{ body: string; rscPayload: string; clientChunks: string[] }> {
-  // Connect to PHP callback socket if provided
+  // Create per-render callback client if a callback socket is provided
+  let client: PhpCallbackClient | null = null;
+
   if (callbackSocket) {
-    await connectCallback(callbackSocket);
-    (globalThis as any).php = php;
+    client = new PhpCallbackClient();
+    await client.connect(callbackSocket);
+    (globalThis as any).php = client.call.bind(client);
   }
 
   try {
@@ -149,8 +152,8 @@ export async function handleRsc(
 
     return { body, rscPayload, clientChunks: browserChunks };
   } finally {
-    if (callbackSocket) {
-      disconnectCallback();
+    if (client) {
+      client.disconnect();
       delete (globalThis as any).php;
     }
   }

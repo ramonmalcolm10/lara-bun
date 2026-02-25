@@ -11,8 +11,12 @@ class BunBridge
     /** @var string[] */
     private array $socketPaths;
 
-    /** @var Socket[] */
-    private array $sockets = [];
+    /**
+     * Pool of available (idle) sockets per worker index.
+     *
+     * @var array<int, Socket[]>
+     */
+    private array $pool = [];
 
     private int $workerCount;
 
@@ -117,14 +121,18 @@ class BunBridge
         $anyAlive = false;
 
         foreach ($this->socketPaths as $i => $path) {
+            $socket = $this->checkout($i);
+
             try {
-                $response = $this->sendTo($i, '{"type":"ping"}');
+                $this->writeFrame($socket, '{"type":"ping"}');
+                $response = $this->readFrame($socket);
+                $this->release($i, $socket);
 
                 if (($response['type'] ?? null) === 'pong') {
                     $anyAlive = true;
                 }
             } catch (RuntimeException) {
-                // Worker not responding
+                socket_close($socket);
             }
         }
 
@@ -133,11 +141,13 @@ class BunBridge
 
     public function disconnect(): void
     {
-        foreach ($this->sockets as $socket) {
-            socket_close($socket);
+        foreach ($this->pool as $index => $sockets) {
+            foreach ($sockets as $socket) {
+                socket_close($socket);
+            }
         }
 
-        $this->sockets = [];
+        $this->pool = [];
     }
 
     /**
@@ -148,6 +158,9 @@ class BunBridge
         $callbackPath = '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock';
         $callbackServer = null;
         $callbackClient = null;
+
+        $index = $this->currentWorker++ % $this->workerCount;
+        $mainSocket = $this->checkout($index);
 
         try {
             $callbackServer = socket_create(AF_UNIX, SOCK_STREAM, 0);
@@ -166,9 +179,6 @@ class BunBridge
 
             socket_set_nonblock($callbackServer);
 
-            // Send RSC request with callback socket path
-            $mainSocket = $this->getSocket($this->currentWorker++ % $this->workerCount);
-
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc',
                 'component' => $component,
@@ -176,7 +186,6 @@ class BunBridge
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 
-            // Enter select loop monitoring main + callback sockets
             $timeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';
 
@@ -203,27 +212,25 @@ class BunBridge
                     throw new RuntimeException("RSC callback timed out after {$timeout} seconds");
                 }
 
-                // Accept new callback connection
                 if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
                     $accepted = socket_accept($callbackServer);
 
                     if ($accepted !== false) {
                         socket_set_nonblock($accepted);
                         $callbackClient = $accepted;
-                        // Close the listener — we only need one connection
                         socket_close($callbackServer);
                         $callbackServer = null;
                     }
                 }
 
-                // Handle callback data from Bun
                 if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
                     $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
                 }
 
-                // Check for final response on main socket
                 if (in_array($mainSocket, $read, true)) {
                     $response = $this->readFrame($mainSocket);
+                    $this->release($index, $mainSocket);
+                    $mainSocket = null;
 
                     if (isset($response['error'])) {
                         throw new RuntimeException("Bun RSC error: {$response['error']}");
@@ -236,6 +243,12 @@ class BunBridge
                     return $response['result'];
                 }
             }
+        } catch (\Throwable $e) {
+            if ($mainSocket !== null) {
+                socket_close($mainSocket);
+            }
+
+            throw $e;
         } finally {
             if ($callbackClient !== null) {
                 socket_close($callbackClient);
@@ -375,11 +388,17 @@ class BunBridge
         $lastException = null;
 
         for ($attempt = 0; $attempt < $this->workerCount; $attempt++) {
-            $i = $this->currentWorker++ % $this->workerCount;
+            $index = $this->currentWorker++ % $this->workerCount;
+            $socket = $this->checkout($index);
 
             try {
-                return $this->sendTo($i, $json);
+                $this->writeFrame($socket, $json);
+                $response = $this->readFrame($socket);
+                $this->release($index, $socket);
+
+                return $response;
             } catch (RuntimeException $e) {
+                socket_close($socket);
                 $lastException = $e;
             }
         }
@@ -388,28 +407,28 @@ class BunBridge
     }
 
     /**
-     * @return array<string, mixed>
+     * Check out a socket from the pool for exclusive use.
+     * Creates a new connection if no idle sockets are available.
      */
-    private function sendTo(int $index, string $json): array
+    private function checkout(int $index): Socket
     {
-        $socket = $this->getSocket($index);
-
-        $this->writeFrame($socket, $json);
-
-        try {
-            return $this->readFrame($socket);
-        } catch (RuntimeException $e) {
-            $this->closeSocket($index);
-            throw $e;
+        if (! empty($this->pool[$index])) {
+            return array_pop($this->pool[$index]);
         }
+
+        return $this->createSocket($index);
     }
 
-    private function getSocket(int $index): Socket
+    /**
+     * Return a socket to the pool after use.
+     */
+    private function release(int $index, Socket $socket): void
     {
-        if (isset($this->sockets[$index])) {
-            return $this->sockets[$index];
-        }
+        $this->pool[$index][] = $socket;
+    }
 
+    private function createSocket(int $index): Socket
+    {
         $path = $this->socketPaths[$index];
 
         if (! file_exists($path)) {
@@ -439,17 +458,7 @@ class BunBridge
         socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, $timeout);
         socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, $timeout);
 
-        $this->sockets[$index] = $socket;
-
         return $socket;
-    }
-
-    private function closeSocket(int $index): void
-    {
-        if (isset($this->sockets[$index])) {
-            socket_close($this->sockets[$index]);
-            unset($this->sockets[$index]);
-        }
     }
 
     public function __destruct()
