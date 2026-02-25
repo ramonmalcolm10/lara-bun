@@ -76,6 +76,28 @@ class BunBridge
     }
 
     /**
+     * @return array{body: string, rscPayload: string}
+     */
+    public function rsc(string $component, array $props = []): array
+    {
+        $response = $this->send(json_encode([
+            'type' => 'rsc',
+            'component' => $component,
+            'props' => $props,
+        ], JSON_THROW_ON_ERROR));
+
+        if (isset($response['error'])) {
+            throw new RuntimeException("Bun RSC error: {$response['error']}");
+        }
+
+        if (! isset($response['result']) || ! is_array($response['result'])) {
+            throw new RuntimeException('Invalid RSC response from Bun');
+        }
+
+        return $response['result'];
+    }
+
+    /**
      * @return array<int, string>
      */
     public function list(): array

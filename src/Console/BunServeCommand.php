@@ -43,6 +43,10 @@ class BunServeCommand extends Command
             ? $this->detectSsrBundle()
             : null;
 
+        $rscBundle = config('bun.rsc.enabled')
+            ? $this->detectRscBundle()
+            : null;
+
         $entryPoints = collect(config('bun.entry_points', []))
             ->when($ssrBundle, fn ($collection, $bundle) => $collection->push($bundle))
             ->filter()
@@ -57,10 +61,10 @@ class BunServeCommand extends Command
         }
 
         if ($workerCount === 1) {
-            return $this->serveSingle($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath);
+            return $this->serveSingle($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $rscBundle);
         }
 
-        return $this->serveMultiple($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $workerCount);
+        return $this->serveMultiple($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $workerCount, $rscBundle);
     }
 
     private function serveSingle(
@@ -70,11 +74,12 @@ class BunServeCommand extends Command
         string $entryPoints,
         string $workerPath,
         string $bunPath,
+        ?string $rscBundle = null,
     ): int {
         $this->info("Starting Bun bridge on {$socketPath}");
         $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath);
 
-        $env = $this->buildWorkerEnv($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints);
+        $env = $this->buildWorkerEnv($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         $process = proc_open(
             [$bunPath, 'run', $workerPath],
@@ -107,6 +112,7 @@ class BunServeCommand extends Command
         string $workerPath,
         string $bunPath,
         int $workerCount,
+        ?string $rscBundle = null,
     ): int {
         $base = preg_replace('/\.sock$/', '', $baseSocketPath);
 
@@ -126,7 +132,7 @@ class BunServeCommand extends Command
         $this->trapSignals();
 
         for ($i = 0; $i < $workerCount; $i++) {
-            $process = $this->spawnWorker($bunPath, $workerPath, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints);
+            $process = $this->spawnWorker($bunPath, $workerPath, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
             if ($process === null) {
                 $this->error("Failed to start worker {$i}");
@@ -138,7 +144,7 @@ class BunServeCommand extends Command
             $this->processes[$i] = $process;
         }
 
-        return $this->monitorProcesses($bunPath, $workerPath, $functionsDir, $hasFunctionsDir, $entryPoints);
+        return $this->monitorProcesses($bunPath, $workerPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
     }
 
     /**
@@ -151,8 +157,9 @@ class BunServeCommand extends Command
         string $functionsDir,
         bool $hasFunctionsDir,
         string $entryPoints,
+        ?string $rscBundle = null,
     ) {
-        $env = $this->buildWorkerEnv($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints);
+        $env = $this->buildWorkerEnv($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         $process = proc_open(
             [$bunPath, 'run', $workerPath],
@@ -181,6 +188,7 @@ class BunServeCommand extends Command
         string $functionsDir,
         bool $hasFunctionsDir,
         string $entryPoints,
+        ?string $rscBundle = null,
     ): int {
         while (true) {
             pcntl_signal_dispatch();
@@ -201,7 +209,7 @@ class BunServeCommand extends Command
                 if ($status['exitcode'] !== 0) {
                     $this->warn("Worker {$i} exited with code {$status['exitcode']}, restarting...");
 
-                    $newProcess = $this->spawnWorker($bunPath, $workerPath, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints);
+                    $newProcess = $this->spawnWorker($bunPath, $workerPath, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
                     if ($newProcess === null) {
                         $this->error("Failed to restart worker {$i}, shutting down");
@@ -278,7 +286,7 @@ class BunServeCommand extends Command
     /**
      * @return array<string, string>
      */
-    private function buildWorkerEnv(string $socketPath, string $functionsDir, bool $hasFunctionsDir, string $entryPoints): array
+    private function buildWorkerEnv(string $socketPath, string $functionsDir, bool $hasFunctionsDir, string $entryPoints, ?string $rscBundle = null): array
     {
         $env = [
             'BUN_BRIDGE_SOCKET' => $socketPath,
@@ -292,7 +300,24 @@ class BunServeCommand extends Command
             $env['BUN_BRIDGE_ENTRY_POINTS'] = $entryPoints;
         }
 
+        if ($rscBundle !== null) {
+            $env['BUN_RSC_BUNDLE'] = $rscBundle;
+        }
+
         return $env;
+    }
+
+    private function detectRscBundle(): ?string
+    {
+        $configured = config('bun.rsc.bundle');
+
+        if ($configured && file_exists($configured)) {
+            return $configured;
+        }
+
+        $this->warn('RSC bundle not found. Run: bun run build:rsc');
+
+        return null;
     }
 
     private function detectSsrBundle(): ?string

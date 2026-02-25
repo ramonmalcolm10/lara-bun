@@ -6,10 +6,12 @@ type MessageHandler = (args: Record<string, unknown>) => unknown;
 const functions: Record<string, MessageHandler> = {};
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "ssr";
+  type: "ping" | "call" | "list" | "ssr" | "rsc";
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
+  component?: string;
+  props?: Record<string, unknown>;
 }
 
 function log(...args: unknown[]): void {
@@ -115,6 +117,26 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       }
     }
 
+    case "rsc": {
+      if (!rscHandler) {
+        return '{"error":"RSC not enabled. Set BUN_RSC_ENABLED=true and run: bun run build:rsc"}';
+      }
+      if (!message.component) {
+        return '{"error":"Missing component in RSC message"}';
+      }
+      try {
+        const result = await rscHandler.handleRsc(
+          message.component,
+          message.props ?? {}
+        );
+        return JSON.stringify({ result });
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     case "list":
       return JSON.stringify({ result: Object.keys(functions) });
 
@@ -132,7 +154,29 @@ if (functionsDir) {
 
 await loadEntryPoints();
 
-if (Object.keys(functions).length === 0) {
+// Load RSC handler if a bundle is configured
+type RscHandlerModule = {
+  handleRsc: (
+    component: string,
+    props: Record<string, unknown>
+  ) => Promise<{ body: string; rscPayload: string }>;
+};
+
+let rscHandler: RscHandlerModule | null = null;
+
+if (process.env.BUN_RSC_BUNDLE) {
+  try {
+    rscHandler = (await import("./rsc-handler")) as RscHandlerModule;
+    log("RSC handler loaded");
+  } catch (err) {
+    log(
+      "Failed to load RSC handler:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
+
+if (Object.keys(functions).length === 0 && !rscHandler) {
   log("No functions discovered. Provide a functions directory or entry points.");
   process.exit(1);
 }

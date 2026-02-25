@@ -81,6 +81,7 @@ $isRunning = Bun::ping();
 |--------|-------------|
 | `call(string $function, array $args = []): mixed` | Call a Bun function by name |
 | `ssr(array $page): array` | Render an Inertia page via SSR |
+| `rsc(string $component, array $props = []): array` | Render a React Server Component to HTML |
 | `list(): array` | List all discovered function names |
 | `ping(): bool` | Check if the Bun bridge is running |
 | `disconnect(): void` | Close all socket connections |
@@ -109,6 +110,9 @@ return [
 | `functions_dir` | `BUN_BRIDGE_FUNCTIONS_DIR` | `resources/bun` | Directory to scan for functions |
 | `workers` | `BUN_WORKERS` | `1` | Number of Bun worker processes |
 | `ssr.enabled` | `BUN_SSR_ENABLED` | `false` | Enable Bun-based Inertia SSR |
+| `rsc.enabled` | `BUN_RSC_ENABLED` | `false` | Enable React Server Components rendering |
+| `rsc.bundle` | `BUN_RSC_BUNDLE` | `bootstrap/rsc/entry.rsc.js` | Path to the pre-built RSC bundle |
+| `rsc.source_dir` | `BUN_RSC_SOURCE_DIR` | `resources/js/rsc` | Directory containing RSC component files |
 | `entry_points` | `BUN_BRIDGE_ENTRY_POINTS` | `[]` | Comma-separated paths to additional JS/TS bundles |
 
 ## Multi-Worker Support
@@ -259,6 +263,78 @@ BUN_BRIDGE_ENTRY_POINTS=dist/my-bundle.js,dist/another.js
 ```
 
 Each exported function from these files becomes callable via `BunBridge::call()`.
+
+## React Server Components
+
+Lara Bun can render React Server Components (RSC) to HTML via the Unix socket. Async server components run in Bun, fetch data server-side, and return fully rendered HTML with zero client JavaScript.
+
+### 1. Create server components
+
+Place your server components in `resources/js/rsc/` (configurable via `rsc.source_dir`). Each file's default export becomes a callable component, using the filename as the component name:
+
+```tsx
+// resources/js/rsc/Greeting.tsx → callable as "Greeting"
+export default async function Greeting({ name }: { name: string }) {
+  return <h1>Hello, {name}!</h1>;
+}
+```
+
+```tsx
+// resources/js/rsc/user-profile.tsx → callable as "user-profile"
+export default async function UserProfile({ id }: { id: number }) {
+  const user = await fetch(`https://api.example.com/users/${id}`).then(r => r.json());
+  return <div>{user.name}</div>;
+}
+```
+
+### 2. Build the RSC bundle
+
+The package includes a build script that auto-discovers all components in your `rsc/` directory, generates the entry file, and builds the bundle:
+
+```bash
+bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts
+```
+
+Or with custom paths:
+
+```bash
+bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts resources/js/rsc bootstrap/rsc
+```
+
+This produces `bootstrap/rsc/entry.rsc.js`. Files prefixed with `_`, or containing `.test.`/`.spec.` are excluded.
+
+### 3. Enable RSC
+
+Add to your `.env`:
+
+```env
+BUN_RSC_ENABLED=true
+```
+
+### 4. Call from PHP
+
+```php
+use RamonMalcolm\LaraBun\BunBridge;
+
+$result = $bridge->rsc('Greeting', ['name' => 'World']);
+
+// $result['body']       → rendered HTML string
+// $result['rscPayload'] → React Flight payload for hydration
+```
+
+### How RSC rendering works
+
+```
+PHP: $bridge->rsc('Component', $props)
+  → Unix socket → worker.ts "rsc" handler
+    → rsc-handler.ts loads pre-built RSC bundle
+    → renderRsc() → Flight payload (serialized React tree)
+    → createFromReadableStream() → deserialize into React elements
+    → renderToReadableStream() → HTML string
+  ← returns { body, rscPayload }
+```
+
+The Flight protocol serializes the React component tree (including async components) into a streamable format. The handler deserializes it back into React elements and renders them to HTML. Both the rendered HTML and the raw Flight payload are returned, allowing you to use the HTML directly or hydrate on the client if needed.
 
 ## Laravel Octane
 
