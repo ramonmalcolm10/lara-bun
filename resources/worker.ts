@@ -6,13 +6,14 @@ type MessageHandler = (args: Record<string, unknown>) => unknown;
 const functions: Record<string, MessageHandler> = {};
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "ssr" | "rsc";
+  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream";
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
   component?: string;
   props?: Record<string, unknown>;
   callbackSocket?: string;
+  streamSocket?: string;
 }
 
 function log(...args: unknown[]): void {
@@ -163,6 +164,16 @@ type RscHandlerModule = {
     props: Record<string, unknown>,
     callbackSocket?: string | null
   ) => Promise<{ body: string; rscPayload: string; clientChunks: string[] }>;
+  handleRscStream: (
+    component: string,
+    props: Record<string, unknown>,
+    callbackSocket?: string | null
+  ) => Promise<{ stream: ReadableStream; clientChunks: string[] }>;
+  handleRscHtmlStream: (
+    component: string,
+    props: Record<string, unknown>,
+    callbackSocket?: string | null
+  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }>;
 };
 
 let rscHandler: RscHandlerModule | null = null;
@@ -184,13 +195,181 @@ if (Object.keys(functions).length === 0 && !rscHandler) {
   process.exit(1);
 }
 
+/**
+ * Handles rsc-stream messages.
+ *
+ * Connects to PHP's stream socket via Bun.connect() and writes Flight data
+ * there. Each frame is followed by `await Bun.sleep(0)` to force an I/O
+ * flush, ensuring PHP receives stream chunks before blocking callbacks.
+ */
+async function handleRscStreamMessage(
+  mainSocket: SocketLike,
+  message: IncomingMessage
+): Promise<void> {
+  if (!rscHandler) {
+    writeFrame(mainSocket, '{"error":"RSC not enabled"}');
+    return;
+  }
+  if (!message.component) {
+    writeFrame(mainSocket, '{"error":"Missing component in RSC message"}');
+    return;
+  }
+  if (!message.streamSocket) {
+    writeFrame(mainSocket, '{"error":"Missing streamSocket in RSC stream message"}');
+    return;
+  }
+
+  // Connect to PHP's stream socket first — ALL responses go through this
+  // Bun.connect() socket which flushes writes immediately, unlike the
+  // Bun.listen handler socket which buffers writes internally.
+  let streamConn: SocketLike | null = null;
+
+  try {
+    const conn = await Bun.connect({
+      unix: message.streamSocket,
+      socket: {
+        data() {},
+        open() {},
+        close() {},
+        error(_, err) {
+          log("Stream socket error:", err.message);
+        },
+      },
+    });
+    streamConn = conn as unknown as SocketLike;
+
+    const { stream, clientChunks } = await rscHandler.handleRscStream(
+      message.component,
+      message.props ?? {},
+      message.callbackSocket ?? null
+    );
+
+    // Send clientChunks as the first frame
+    writeFrame(streamConn, JSON.stringify({ type: "stream-start", clientChunks }));
+    // Yield to event loop so the frame is flushed to the kernel immediately.
+    // Without this, writes accumulate and only flush on the next await, which
+    // may be after a blocking callback has already reached PHP.
+    await Bun.sleep(0);
+
+    const reader = stream.getReader();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = typeof value === "string"
+        ? value
+        : new TextDecoder().decode(value);
+      writeFrame(streamConn, JSON.stringify({ type: "stream-chunk", data: text }));
+      // Flush each chunk individually so PHP can echo it to the browser
+      // before handling any blocking callbacks.
+      await Bun.sleep(0);
+    }
+
+    writeFrame(streamConn, '{"type":"stream-end"}');
+  } catch (err) {
+    const errorJson = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+    try {
+      writeFrame(streamConn ?? mainSocket, errorJson);
+    } catch {
+      // Best effort
+    }
+  } finally {
+    if (streamConn) {
+      (streamConn as any).end();
+    }
+  }
+}
+
+/**
+ * Handles rsc-html-stream messages for initial page loads with Suspense.
+ *
+ * Streams HTML chunks (shell + completion scripts) to PHP, followed by the
+ * full Flight payload for client-side hydration.
+ */
+async function handleRscHtmlStreamMessage(
+  mainSocket: SocketLike,
+  message: IncomingMessage
+): Promise<void> {
+  if (!rscHandler) {
+    writeFrame(mainSocket, '{"error":"RSC not enabled"}');
+    return;
+  }
+  if (!message.component) {
+    writeFrame(mainSocket, '{"error":"Missing component in RSC message"}');
+    return;
+  }
+  if (!message.streamSocket) {
+    writeFrame(mainSocket, '{"error":"Missing streamSocket in RSC message"}');
+    return;
+  }
+
+  let streamConn: SocketLike | null = null;
+
+  try {
+    const conn = await Bun.connect({
+      unix: message.streamSocket,
+      socket: {
+        data() {},
+        open() {},
+        close() {},
+        error(_, err) {
+          log("HTML stream socket error:", err.message);
+        },
+      },
+    });
+    streamConn = conn as unknown as SocketLike;
+
+    const { htmlStream, rscPayloadPromise, clientChunks } =
+      await rscHandler.handleRscHtmlStream(
+        message.component,
+        message.props ?? {},
+        message.callbackSocket ?? null
+      );
+
+    // Send metadata as first frame
+    writeFrame(streamConn, JSON.stringify({ type: "html-start", clientChunks }));
+    await Bun.sleep(0);
+
+    // Stream HTML chunks progressively
+    const reader = htmlStream.getReader();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = typeof value === "string"
+        ? value
+        : new TextDecoder().decode(value);
+      writeFrame(streamConn, JSON.stringify({ type: "html-chunk", data: text }));
+      await Bun.sleep(0);
+    }
+
+    // Collect the full Flight payload (should be ready by now since
+    // the HTML stream completed after all Suspense boundaries resolved)
+    const rscPayload = await rscPayloadPromise;
+    writeFrame(streamConn, JSON.stringify({ type: "html-end", rscPayload }));
+  } catch (err) {
+    const errorJson = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+    try {
+      writeFrame(streamConn ?? mainSocket, errorJson);
+    } catch {
+      // Best effort
+    }
+  } finally {
+    if (streamConn) {
+      (streamConn as any).end();
+    }
+  }
+}
+
 try {
   unlinkSync(socketPath);
 } catch {
   // File doesn't exist
 }
 
-type SocketLike = { write(data: string | Uint8Array): number };
+type SocketLike = { write(data: string | Uint8Array): number; flush(): void };
 
 const pendingWriteBuffers = new Map<unknown, Buffer>();
 const socketBuffers = new Map<unknown, Buffer>();
@@ -246,8 +425,18 @@ const server = Bun.listen({
 
         try {
           const message = JSON.parse(jsonBytes.toString("utf-8")) as IncomingMessage;
-          const response = await handleMessage(message);
-          writeFrame(socket, response);
+
+          if (message.type === "rsc-stream" || message.type === "rsc-html-stream") {
+            // Run streaming outside the data handler so socket writes
+            // are not corked by Bun's async callback buffering.
+            const handler = message.type === "rsc-html-stream"
+              ? handleRscHtmlStreamMessage
+              : handleRscStreamMessage;
+            setTimeout(() => handler(socket, message), 0);
+          } else {
+            const response = await handleMessage(message);
+            writeFrame(socket, response);
+          }
         } catch (err) {
           log("Failed to parse message:", err);
           writeFrame(socket, '{"error":"Invalid JSON"}');

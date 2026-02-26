@@ -1,7 +1,7 @@
 import { createFromReadableStream } from "react-server-dom-webpack/client.edge";
 import { renderToReadableStream } from "react-dom/server";
 import { readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { PhpCallbackClient } from "./php-callback";
 
 const bundlePath = process.env.BUN_RSC_BUNDLE;
@@ -57,10 +57,9 @@ const ssrModules: Record<string, unknown> = {};
 
 if (ssrManifest) {
   for (const moduleId of Object.keys(ssrManifest.moduleMap)) {
-    // moduleId is like "./Counter.tsx" — SSR bundle is at client/Counter.js
-    const name = moduleId
-      .replace(/^\.\//, "")
-      .replace(/\.(tsx|ts|jsx|js)$/, "");
+    // moduleId is like "./Counter.tsx" or "lara-bun/Link.tsx"
+    // SSR bundle uses basename only: client/Counter.js, client/Link.js
+    const name = basename(moduleId).replace(/\.(tsx|ts|jsx|js)$/, "");
     const ssrBundlePath = join(ssrClientDir, `${name}.js`);
 
     if (existsSync(ssrBundlePath)) {
@@ -105,7 +104,133 @@ const emptyManifest = {
   },
 };
 
-// ─── Handler ────────────────────────────────────────────────────────────────
+// ─── Stream Handler (SPA navigation) ─────────────────────────────────────────
+
+/**
+ * Returns the raw Flight ReadableStream for SPA navigation.
+ * PHP streams this directly to the browser with chunked transfer encoding.
+ * The browser pipes response.body into createFromReadableStream() for
+ * progressive rendering.
+ */
+export async function handleRscStream(
+  component: string,
+  props: Record<string, unknown>,
+  callbackSocket?: string | null
+): Promise<{ stream: ReadableStream; clientChunks: string[] }> {
+  let client: PhpCallbackClient | null = null;
+
+  if (callbackSocket) {
+    client = new PhpCallbackClient();
+    await client.connect(callbackSocket);
+    (globalThis as any).php = client.call.bind(client);
+  }
+
+  const flightStream: ReadableStream = clientManifest
+    ? rscModule.renderRscStream(component, props, clientManifest)
+    : rscModule.renderRscStream(component, props);
+
+  // Wrap the stream to clean up the callback client when done
+  if (client) {
+    const reader = flightStream.getReader();
+    const wrappedStream = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          client!.disconnect();
+          delete (globalThis as any).php;
+        } else {
+          controller.enqueue(value);
+        }
+      },
+      cancel() {
+        reader.cancel();
+        client!.disconnect();
+        delete (globalThis as any).php;
+      },
+    });
+    return { stream: wrappedStream, clientChunks: browserChunks };
+  }
+
+  return { stream: flightStream, clientChunks: browserChunks };
+}
+
+// ─── HTML Stream Handler (initial page load with Suspense streaming) ────────
+
+/**
+ * Returns an HTML ReadableStream for initial page loads with Suspense support.
+ * Unlike handleRsc, this does NOT await allReady — React streams the shell
+ * HTML immediately (with Suspense fallbacks), then injects completion scripts
+ * as async components resolve.
+ *
+ * Also returns a Promise for the full Flight payload (resolves when all
+ * async content is ready), needed for client-side hydration.
+ */
+export async function handleRscHtmlStream(
+  component: string,
+  props: Record<string, unknown>,
+  callbackSocket?: string | null
+): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }> {
+  let client: PhpCallbackClient | null = null;
+
+  if (callbackSocket) {
+    client = new PhpCallbackClient();
+    await client.connect(callbackSocket);
+    (globalThis as any).php = client.call.bind(client);
+  }
+
+  // Render Flight as a stream (progressive — Suspense boundaries emit lazily)
+  const flightStream: ReadableStream = clientManifest
+    ? rscModule.renderRscStream(component, props, clientManifest)
+    : rscModule.renderRscStream(component, props);
+
+  // Tee: one branch for HTML SSR, one to collect the full Flight payload
+  const [flightForHtml, flightForPayload] = flightStream.tee();
+
+  // Collect the full Flight payload string (resolves when all content is ready)
+  const rscPayloadPromise = new Response(flightForPayload).text();
+
+  // Deserialize Flight → React tree (resolves once shell is parsed)
+  const consumerManifest = ssrManifest
+    ? { serverConsumerManifest: ssrManifest }
+    : emptyManifest;
+
+  const reactTree = await createFromReadableStream(flightForHtml, consumerManifest);
+
+  // Render React tree to HTML stream — DO NOT await allReady.
+  // React sends the shell (with Suspense fallbacks) immediately, then injects
+  // <template> + <script> completion tags as async content resolves.
+  const htmlStream = await renderToReadableStream(reactTree);
+
+  // Wrap to clean up callback client when HTML stream closes
+  if (client) {
+    const reader = htmlStream.getReader();
+    const wrappedStream = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          // Flight payload should also be done by now
+          await rscPayloadPromise.catch(() => {});
+          client!.disconnect();
+          delete (globalThis as any).php;
+        } else {
+          controller.enqueue(value);
+        }
+      },
+      cancel() {
+        reader.cancel();
+        client!.disconnect();
+        delete (globalThis as any).php;
+      },
+    });
+    return { htmlStream: wrappedStream, rscPayloadPromise, clientChunks: browserChunks };
+  }
+
+  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks };
+}
+
+// ─── Handler (buffered, non-streaming) ───────────────────────────────────────
 
 export async function handleRsc(
   component: string,

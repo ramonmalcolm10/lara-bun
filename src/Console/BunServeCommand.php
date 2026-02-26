@@ -288,9 +288,12 @@ class BunServeCommand extends Command
      */
     private function buildWorkerEnv(string $socketPath, string $functionsDir, bool $hasFunctionsDir, string $entryPoints, ?string $rscBundle = null): array
     {
-        $env = [
-            'BUN_BRIDGE_SOCKET' => $socketPath,
-        ];
+        // Start with inherited environment — proc_open replaces the entire
+        // env when an array is passed, so we must include PATH, HOME, etc.
+        $env = getenv();
+
+        $env['BUN_BRIDGE_SOCKET'] = $socketPath;
+        $env['NODE_ENV'] = 'production';
 
         if ($hasFunctionsDir) {
             $env['BUN_BRIDGE_FUNCTIONS_DIR'] = $functionsDir;
@@ -302,6 +305,12 @@ class BunServeCommand extends Command
 
         if ($rscBundle !== null) {
             $env['BUN_RSC_BUNDLE'] = $rscBundle;
+        }
+
+        $packageDir = realpath(__DIR__.'/../../');
+
+        if ($packageDir !== false) {
+            $env['LARA_BUN_PACKAGE_DIR'] = $packageDir;
         }
 
         return $env;

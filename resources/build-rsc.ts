@@ -11,13 +11,18 @@
  */
 
 import { join, basename, resolve } from "node:path";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import type { BunPlugin } from "bun";
 
 const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js/rsc");
 const outDir = process.argv[3] ?? join(process.cwd(), "bootstrap/rsc");
 const clientOutDir = join(outDir, "client");
 const browserOutDir = join(process.cwd(), "public/build/rsc");
+
+// Resolve package directory for alias plugin and package client components
+const packageDir = process.env.LARA_BUN_PACKAGE_DIR
+  ?? resolve(join(import.meta.dir, ".."));
+const packageJsDir = join(packageDir, "resources/js");
 
 const glob = new Bun.Glob("**/*.{tsx,ts,jsx,js}");
 
@@ -42,6 +47,8 @@ function isClientFile(filePath: string): boolean {
     return false;
   }
 }
+
+// ─── Discover User Components ───────────────────────────────────────────────
 
 for await (const path of glob.scan(sourceDir)) {
   if (
@@ -70,6 +77,43 @@ for await (const path of glob.scan(sourceDir)) {
   }
 }
 
+// ─── Discover Package Client Components ─────────────────────────────────────
+
+// Scan the package's resources/js/ directory for "use client" files.
+// Package client components get moduleId prefix "lara-bun/" (e.g., "lara-bun/Link.tsx")
+const packageClientComponents: ComponentInfo[] = [];
+
+if (existsSync(packageJsDir)) {
+  for await (const path of glob.scan(packageJsDir)) {
+    if (
+      path.startsWith("entry.") ||
+      path.includes(".test.") ||
+      path.includes(".spec.") ||
+      path.startsWith("_")
+    ) {
+      continue;
+    }
+
+    const absolutePath = resolve(packageJsDir, path);
+
+    if (!isClientFile(absolutePath)) {
+      continue;
+    }
+
+    const name = basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
+    const info: ComponentInfo = {
+      name,
+      importAlias: `_C${aliasIndex++}`,
+      relativePath: `lara-bun/${path}`,
+      absolutePath,
+      isClient: true,
+    };
+
+    packageClientComponents.push(info);
+    clientComponents.push(info);
+  }
+}
+
 const allComponents = [...serverComponents, ...clientComponents];
 
 if (allComponents.length === 0) {
@@ -90,7 +134,7 @@ if (clientComponents.length > 0) {
 const clientAbsolutePaths = new Set(clientComponents.map((c) => c.absolutePath));
 
 // Map from moduleId (used in manifests) to component info
-// moduleId is the relative path like "./Counter.tsx"
+// moduleId is the relative path like "./Counter.tsx" or "lara-bun/Link.tsx"
 const clientModuleIds = new Map<string, ComponentInfo>();
 for (const c of clientComponents) {
   clientModuleIds.set(c.relativePath, c);
@@ -124,12 +168,51 @@ export default createClientModuleProxy("${moduleId}");
   },
 };
 
+// Package alias plugin — resolves "lara-bun/*" imports to the package directory
+// so server components can `import Link from 'lara-bun/Link'`
+const packageAliasPlugin: BunPlugin = {
+  name: "lara-bun-alias",
+  setup(build) {
+    build.onResolve({ filter: /^lara-bun\// }, (args) => {
+      const subPath = args.path.replace(/^lara-bun\//, "");
+
+      // Try exact path first, then with extensions
+      const candidates = [
+        join(packageJsDir, subPath),
+        join(packageJsDir, `${subPath}.tsx`),
+        join(packageJsDir, `${subPath}.ts`),
+        join(packageJsDir, `${subPath}.jsx`),
+        join(packageJsDir, `${subPath}.js`),
+      ];
+
+      for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+          return { path: candidate };
+        }
+      }
+
+      return undefined;
+    });
+  },
+};
+
+const serverPlugins: BunPlugin[] = [packageAliasPlugin];
+if (clientComponents.length > 0) {
+  serverPlugins.push(useClientPlugin);
+}
+
 // Generate server entry that imports all components (client ones will be proxied)
-const serverImports = allComponents
+// Only import user-space server/client components — package client components
+// are resolved through the alias plugin when referenced from server components
+const userComponents = allComponents.filter(
+  (c) => !c.relativePath.startsWith("lara-bun/")
+);
+
+const serverImports = userComponents
   .map((c) => `import ${c.importAlias} from "${c.absolutePath}";`)
   .join("\n");
 
-const serverComponentMap = allComponents
+const serverComponentMap = userComponents
   .map((c) => `  "${c.name}": ${c.importAlias},`)
   .join("\n");
 
@@ -167,8 +250,28 @@ export async function renderRsc(
 
   return await new Response(stream).text();
 }
+
+export function renderRscStream(
+  component: string,
+  props: Record<string, unknown>,
+  ${clientManifestParam}
+): ReadableStream {
+  const Component = components[component];
+
+  if (!Component) {
+    throw new Error(
+      \`Unknown RSC component: "\${component}". Available: \${Object.keys(components).join(", ")}\`
+    );
+  }
+
+  const element = createElement(Component, props);
+  return renderToReadableStream(element, ${clientManifestArg});
+}
 `;
 
+// Clean output directories to prevent stale hashed files
+rmSync(browserOutDir, { recursive: true, force: true });
+rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
 const entryPath = join(outDir, "entry.rsc.tsx");
@@ -180,7 +283,10 @@ const serverResult = await Bun.build({
   outdir: outDir,
   target: "bun",
   conditions: ["react-server"],
-  plugins: clientComponents.length > 0 ? [useClientPlugin] : [],
+  plugins: serverPlugins,
+  define: {
+    "process.env.NODE_ENV": '"production"',
+  },
 });
 
 if (!serverResult.success) {
@@ -207,6 +313,9 @@ const ssrResult = await Bun.build({
   target: "bun",
   naming: "[name].[ext]",
   external: ["react", "react-dom"],
+  define: {
+    "process.env.NODE_ENV": '"production"',
+  },
 });
 
 if (!ssrResult.success) {
@@ -220,7 +329,9 @@ console.log(`Built SSR client bundles: ${clientOutDir}/`);
 // b) Browser client build — builds client components + hydration entry for browser
 mkdirSync(browserOutDir, { recursive: true });
 
-// Generate a hydration entry that imports all client components and bootstraps hydration
+// Generate a hydration entry that imports createRscApp and all client components
+const createRscAppPath = join(packageJsDir, "createRscApp.ts");
+
 const hydrateImports = clientComponents
   .map(
     (c, i) =>
@@ -234,35 +345,18 @@ const hydrateModuleMap = clientComponents
 
 const hydrateEntrySource = `// Auto-generated hydration entry — do not edit
 // __webpack_require__ and __webpack_chunk_load__ are pre-defined in the
-// inline <script> block in rsc.blade.php so they exist before this ES module
-// initializes (ES module imports are hoisted above module body code).
-import { createFromReadableStream } from "react-server-dom-webpack/client.browser";
-import { hydrateRoot } from "react-dom/client";
+// inline <script> block rendered by @rscScripts so they exist before this
+// ES module initializes (ES module imports are hoisted above module body code).
+import { createRscApp } from "${createRscAppPath}";
 ${hydrateImports}
 
-// Populate the module map that __webpack_require__ reads from
-const w = window as any;
-${clientComponents.map((c, i) => `w.__RSC_MODULES__["${c.relativePath}"] = _M${i};`).join("\n")}
+const modules: Record<string, unknown> = {
+${hydrateModuleMap}
+};
 
-const rscPayload = w.__RSC_PAYLOAD__;
-if (rscPayload) {
-  const stream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(rscPayload));
-      controller.close();
-    },
-  });
-
-  const root = createFromReadableStream(stream, {
-    callServer: async () => { throw new Error("Server actions not supported"); },
-  });
-
-  Promise.resolve(root).then((reactTree: any) => {
-    const container = document.getElementById("rsc-root");
-    if (container) {
-      hydrateRoot(container, reactTree);
-    }
-  });
+const container = document.getElementById("rsc-root");
+if (container) {
+  createRscApp(container, modules);
 }
 `;
 
@@ -277,6 +371,9 @@ const browserResult = await Bun.build({
   splitting: true,
   minify: true,
   naming: "[name]-[hash].[ext]",
+  define: {
+    "process.env.NODE_ENV": '"production"',
+  },
 });
 
 if (!browserResult.success) {

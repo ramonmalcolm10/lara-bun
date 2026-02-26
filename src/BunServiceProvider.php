@@ -39,12 +39,17 @@ class BunServiceProvider extends ServiceProvider
             $this->app->singleton(\Inertia\Ssr\Gateway::class, Ssr\BunSsrGateway::class);
         }
 
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'lara-bun');
         $this->registerBladeDirectives();
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../config/bun.php' => config_path('bun.php'),
             ], 'lara-bun-config');
+
+            $this->publishes([
+                __DIR__.'/../resources/views' => resource_path('views/vendor/lara-bun'),
+            ], 'lara-bun-views');
 
             $this->commands([
                 BunServeCommand::class,

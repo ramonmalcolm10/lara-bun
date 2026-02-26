@@ -14,6 +14,7 @@ return [
         'bundle' => env('BUN_RSC_BUNDLE', base_path('bootstrap/rsc/entry.rsc.js')),
         'source_dir' => env('BUN_RSC_SOURCE_DIR', resource_path('js/rsc')),
         'client_build_dir' => env('BUN_RSC_CLIENT_BUILD_DIR', public_path('build/rsc')),
+        'root_view' => env('BUN_RSC_ROOT_VIEW', 'lara-bun::rsc-app'),
         'callables' => [],
         'callables_dir' => null,
         'callback_timeout' => 5,

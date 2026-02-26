@@ -30,7 +30,10 @@
     "autoload": {
         "psr-4": {
             "RamonMalcolm\\LaraBun\\": "src/"
-        }
+        },
+        "files": [
+            "src/helpers.php"
+        ]
     },
     "extra": {
         "laravel": {
