@@ -228,15 +228,20 @@ import { renderToReadableStream } from "react-server-dom-webpack/server.edge";
 import { createElement } from "react";
 ${serverImports}
 
+interface LayoutEntry {
+  component: string;
+  props: Record<string, unknown>;
+}
+
 const components: Record<string, React.ComponentType<any>> = {
 ${serverComponentMap}
 };
 
-export async function renderRsc(
+function buildElement(
   component: string,
   props: Record<string, unknown>,
-  ${clientManifestParam}
-): Promise<string> {
+  layouts: LayoutEntry[]
+): React.ReactElement {
   const Component = components[component];
 
   if (!Component) {
@@ -245,7 +250,29 @@ export async function renderRsc(
     );
   }
 
-  const element = createElement(Component, props);
+  let element = createElement(Component, props);
+
+  // Wrap in layouts: layouts[0] is outermost, layouts[last] is innermost
+  for (let i = layouts.length - 1; i >= 0; i--) {
+    const Layout = components[layouts[i].component];
+    if (!Layout) {
+      throw new Error(
+        \`Unknown layout component: "\${layouts[i].component}". Available: \${Object.keys(components).join(", ")}\`
+      );
+    }
+    element = createElement(Layout, { ...layouts[i].props, children: element });
+  }
+
+  return element;
+}
+
+export async function renderRsc(
+  component: string,
+  props: Record<string, unknown>,
+  ${clientManifestParam ? `${clientManifestParam},` : ""}
+  layouts: LayoutEntry[] = []
+): Promise<string> {
+  const element = buildElement(component, props, layouts);
   const stream = renderToReadableStream(element, ${clientManifestArg});
 
   return await new Response(stream).text();
@@ -254,17 +281,10 @@ export async function renderRsc(
 export function renderRscStream(
   component: string,
   props: Record<string, unknown>,
-  ${clientManifestParam}
+  ${clientManifestParam ? `${clientManifestParam},` : ""}
+  layouts: LayoutEntry[] = []
 ): ReadableStream {
-  const Component = components[component];
-
-  if (!Component) {
-    throw new Error(
-      \`Unknown RSC component: "\${component}". Available: \${Object.keys(components).join(", ")}\`
-    );
-  }
-
-  const element = createElement(Component, props);
+  const element = buildElement(component, props, layouts);
   return renderToReadableStream(element, ${clientManifestArg});
 }
 `;

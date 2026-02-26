@@ -4,6 +4,11 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { PhpCallbackClient } from "./php-callback";
 
+interface LayoutEntry {
+  component: string;
+  props: Record<string, unknown>;
+}
+
 const bundlePath = process.env.BUN_RSC_BUNDLE;
 
 if (!bundlePath) {
@@ -115,7 +120,8 @@ const emptyManifest = {
 export async function handleRscStream(
   component: string,
   props: Record<string, unknown>,
-  callbackSocket?: string | null
+  callbackSocket?: string | null,
+  layouts: LayoutEntry[] = []
 ): Promise<{ stream: ReadableStream; clientChunks: string[] }> {
   let client: PhpCallbackClient | null = null;
 
@@ -126,8 +132,8 @@ export async function handleRscStream(
   }
 
   const flightStream: ReadableStream = clientManifest
-    ? rscModule.renderRscStream(component, props, clientManifest)
-    : rscModule.renderRscStream(component, props);
+    ? rscModule.renderRscStream(component, props, clientManifest, layouts)
+    : rscModule.renderRscStream(component, props, layouts);
 
   // Wrap the stream to clean up the callback client when done
   if (client) {
@@ -169,7 +175,8 @@ export async function handleRscStream(
 export async function handleRscHtmlStream(
   component: string,
   props: Record<string, unknown>,
-  callbackSocket?: string | null
+  callbackSocket?: string | null,
+  layouts: LayoutEntry[] = []
 ): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }> {
   let client: PhpCallbackClient | null = null;
 
@@ -181,8 +188,8 @@ export async function handleRscHtmlStream(
 
   // Render Flight as a stream (progressive — Suspense boundaries emit lazily)
   const flightStream: ReadableStream = clientManifest
-    ? rscModule.renderRscStream(component, props, clientManifest)
-    : rscModule.renderRscStream(component, props);
+    ? rscModule.renderRscStream(component, props, clientManifest, layouts)
+    : rscModule.renderRscStream(component, props, layouts);
 
   // Tee: one branch for HTML SSR, one to collect the full Flight payload
   const [flightForHtml, flightForPayload] = flightStream.tee();
@@ -235,7 +242,8 @@ export async function handleRscHtmlStream(
 export async function handleRsc(
   component: string,
   props: Record<string, unknown>,
-  callbackSocket?: string | null
+  callbackSocket?: string | null,
+  layouts: LayoutEntry[] = []
 ): Promise<{ body: string; rscPayload: string; clientChunks: string[] }> {
   // Create per-render callback client if a callback socket is provided
   let client: PhpCallbackClient | null = null;
@@ -249,8 +257,8 @@ export async function handleRsc(
   try {
     // Step 1: Render component to RSC Flight payload
     const rscPayload: string = clientManifest
-      ? await rscModule.renderRsc(component, props, clientManifest)
-      : await rscModule.renderRsc(component, props);
+      ? await rscModule.renderRsc(component, props, clientManifest, layouts)
+      : await rscModule.renderRsc(component, props, layouts);
 
     // Step 2: Deserialize Flight payload into React element tree
     const flightStream = new ReadableStream({

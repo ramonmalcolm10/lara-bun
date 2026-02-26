@@ -81,20 +81,22 @@ class BunBridge
     }
 
     /**
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[]}
      */
-    public function rsc(string $component, array $props = []): array
+    public function rsc(string $component, array $props = [], array $layouts = []): array
     {
         $registry = app(CallableRegistry::class);
 
         if ($registry->hasCallables()) {
-            return $this->rscWithCallbacks($component, $props, $registry);
+            return $this->rscWithCallbacks($component, $props, $registry, $layouts);
         }
 
         $response = $this->send(json_encode([
             'type' => 'rsc',
             'component' => $component,
             'props' => $props,
+            'layouts' => $layouts,
         ], JSON_THROW_ON_ERROR));
 
         if (isset($response['error'])) {
@@ -120,12 +122,11 @@ class BunBridge
      *
      * @return \Generator<int, string[]|string, void, void>
      */
-    public function rscStream(string $component, array $props = []): \Generator
+    /**
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
+     */
+    public function rscStream(string $component, array $props = [], array $layouts = []): \Generator
     {
-        $streamPath = '/tmp/rsc-stream-'.bin2hex(random_bytes(8)).'.sock';
-        $streamServer = null;
-        $streamClient = null;
-
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
 
@@ -137,72 +138,47 @@ class BunBridge
         $mainSocket = $this->checkout($index);
 
         try {
-            // Create stream server socket — Bun connects to this to push Flight data
-            $streamServer = $this->createUnixServer($streamPath);
-
             if ($hasCallbacks) {
                 $callbackServer = $this->createUnixServer($callbackPath);
             }
 
-            // Fire-and-forget: send request on main socket, release immediately.
-            // All responses come back via the stream socket (Bun.connect),
-            // bypassing Bun.listen's internal write buffering.
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-stream',
                 'component' => $component,
                 'props' => $props,
-                'streamSocket' => $streamPath,
+                'layouts' => $layouts,
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
-            $this->release($index, $mainSocket);
-            $mainSocket = null;
 
             $timeout = (int) config('bun.rsc.callback_timeout', 30);
             $callbackBuffer = '';
-            $servers = array_filter([$streamServer, $callbackServer]);
 
-            // Accept all pending server connections before entering the read loop
-            while ($servers !== []) {
-                $read = $servers;
+            // Accept callback connection if needed
+            if ($callbackServer !== null) {
+                $read = [$callbackServer];
                 $write = [];
                 $except = [];
-                socket_select($read, $write, $except, $timeout);
 
-                foreach ($read as $server) {
-                    $accepted = socket_accept($server);
+                if (socket_select($read, $write, $except, $timeout) > 0) {
+                    $accepted = socket_accept($callbackServer);
 
-                    if ($accepted === false) {
-                        continue;
-                    }
-
-                    if ($server === $streamServer) {
-                        $streamClient = $accepted;
-                        socket_close($streamServer);
-                        $streamServer = null;
-                    } elseif ($server === $callbackServer) {
+                    if ($accepted !== false) {
                         socket_set_nonblock($accepted);
                         $callbackClient = $accepted;
                         socket_close($callbackServer);
                         $callbackServer = null;
                     }
                 }
-
-                $servers = array_filter([$streamServer, $callbackServer]);
             }
 
-            if ($streamClient === null) {
-                throw new RuntimeException('Bun did not connect to the stream socket');
-            }
-
-            // Read stream frames, handling callbacks if present.
-            //
-            // Critical: callbacks may arrive BEFORE stream data (the php()
-            // call in React happens before the Suspense fallback is emitted).
-            // Before executing a blocking callback, we drain any stream data
-            // that arrived in the same I/O tick so it can be flushed to the
-            // browser first.
+            // Read stream frames from the main socket (same path as SSR).
+            // The Bun.listen drain handler handles backpressure for large responses.
             while (true) {
-                $read = [$streamClient];
+                $read = [$mainSocket];
+
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
+                }
 
                 if ($callbackClient !== null) {
                     $read[] = $callbackClient;
@@ -220,10 +196,19 @@ class BunBridge
                     throw new RuntimeException("RSC stream timed out after {$timeout} seconds");
                 }
 
-                // Always drain stream data first — yield chunks to the
-                // response handler which echoes + flushes to the browser.
-                if (in_array($streamClient, $read, true)) {
-                    $frame = $this->readFrame($streamClient);
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+
+                if (in_array($mainSocket, $read, true)) {
+                    $frame = $this->readFrame($mainSocket);
 
                     if (isset($frame['error'])) {
                         throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
@@ -244,19 +229,19 @@ class BunBridge
                     }
 
                     if ($type === 'stream-end') {
+                        $this->release($index, $mainSocket);
+                        $mainSocket = null;
+
                         break;
                     }
                 }
 
-                // Before executing a callback (which may block), drain any
-                // stream data that arrived in the same I/O tick. Bun flushes
-                // stream writes with await Bun.sleep(0) between chunks, so a
-                // small wait lets those writes reach the kernel buffer.
                 if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
+                    // Drain available stream data before executing callback
                     $streamEnded = false;
 
                     while (! $streamEnded) {
-                        $streamCheck = [$streamClient];
+                        $streamCheck = [$mainSocket];
                         $w = [];
                         $e = [];
 
@@ -264,7 +249,7 @@ class BunBridge
                             break;
                         }
 
-                        $frame = $this->readFrame($streamClient);
+                        $frame = $this->readFrame($mainSocket);
 
                         if (isset($frame['error'])) {
                             throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
@@ -277,6 +262,8 @@ class BunBridge
                         } elseif ($type === 'stream-chunk') {
                             yield $frame['data'] ?? '';
                         } elseif ($type === 'stream-end') {
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
                             $streamEnded = true;
                         }
                     }
@@ -295,24 +282,12 @@ class BunBridge
 
             throw $e;
         } finally {
-            if ($streamClient !== null) {
-                socket_close($streamClient);
-            }
-
             if ($callbackClient !== null) {
                 socket_close($callbackClient);
             }
 
-            if ($streamServer !== null) {
-                socket_close($streamServer);
-            }
-
             if ($callbackServer !== null) {
                 socket_close($callbackServer);
-            }
-
-            if (file_exists($streamPath)) {
-                @unlink($streamPath);
             }
 
             if ($callbackPath !== null && file_exists($callbackPath)) {
@@ -335,12 +310,11 @@ class BunBridge
      *
      * @return \Generator<int, array{clientChunks?: string[], rscPayload?: string}|string, void, void>
      */
-    public function rscHtmlStream(string $component, array $props = []): \Generator
+    /**
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
+     */
+    public function rscHtmlStream(string $component, array $props = [], array $layouts = []): \Generator
     {
-        $streamPath = '/tmp/rsc-html-'.bin2hex(random_bytes(8)).'.sock';
-        $streamServer = null;
-        $streamClient = null;
-
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
 
@@ -352,8 +326,6 @@ class BunBridge
         $mainSocket = $this->checkout($index);
 
         try {
-            $streamServer = $this->createUnixServer($streamPath);
-
             if ($hasCallbacks) {
                 $callbackServer = $this->createUnixServer($callbackPath);
             }
@@ -362,50 +334,39 @@ class BunBridge
                 'type' => 'rsc-html-stream',
                 'component' => $component,
                 'props' => $props,
-                'streamSocket' => $streamPath,
+                'layouts' => $layouts,
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
-            $this->release($index, $mainSocket);
-            $mainSocket = null;
 
             $timeout = (int) config('bun.rsc.callback_timeout', 30);
             $callbackBuffer = '';
-            $servers = array_filter([$streamServer, $callbackServer]);
 
-            while ($servers !== []) {
-                $read = $servers;
+            // Accept callback connection if needed
+            if ($callbackServer !== null) {
+                $read = [$callbackServer];
                 $write = [];
                 $except = [];
-                socket_select($read, $write, $except, $timeout);
 
-                foreach ($read as $server) {
-                    $accepted = socket_accept($server);
+                if (socket_select($read, $write, $except, $timeout) > 0) {
+                    $accepted = socket_accept($callbackServer);
 
-                    if ($accepted === false) {
-                        continue;
-                    }
-
-                    if ($server === $streamServer) {
-                        $streamClient = $accepted;
-                        socket_close($streamServer);
-                        $streamServer = null;
-                    } elseif ($server === $callbackServer) {
+                    if ($accepted !== false) {
                         socket_set_nonblock($accepted);
                         $callbackClient = $accepted;
                         socket_close($callbackServer);
                         $callbackServer = null;
                     }
                 }
-
-                $servers = array_filter([$streamServer, $callbackServer]);
             }
 
-            if ($streamClient === null) {
-                throw new RuntimeException('Bun did not connect to the HTML stream socket');
-            }
-
+            // Read stream frames from the main socket (same path as SSR).
+            // The Bun.listen drain handler handles backpressure for large responses.
             while (true) {
-                $read = [$streamClient];
+                $read = [$mainSocket];
+
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
+                }
 
                 if ($callbackClient !== null) {
                     $read[] = $callbackClient;
@@ -423,8 +384,19 @@ class BunBridge
                     throw new RuntimeException("RSC HTML stream timed out after {$timeout} seconds");
                 }
 
-                if (in_array($streamClient, $read, true)) {
-                    $frame = $this->readFrame($streamClient);
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+
+                if (in_array($mainSocket, $read, true)) {
+                    $frame = $this->readFrame($mainSocket);
 
                     if (isset($frame['error'])) {
                         throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
@@ -446,6 +418,8 @@ class BunBridge
 
                     if ($type === 'html-end') {
                         yield ['rscPayload' => $frame['rscPayload'] ?? ''];
+                        $this->release($index, $mainSocket);
+                        $mainSocket = null;
 
                         break;
                     }
@@ -454,7 +428,7 @@ class BunBridge
                 if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
                     // Drain available stream data before executing callback
                     while (true) {
-                        $streamCheck = [$streamClient];
+                        $streamCheck = [$mainSocket];
                         $w = [];
                         $e = [];
 
@@ -462,7 +436,7 @@ class BunBridge
                             break;
                         }
 
-                        $frame = $this->readFrame($streamClient);
+                        $frame = $this->readFrame($mainSocket);
 
                         if (isset($frame['error'])) {
                             throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
@@ -476,6 +450,8 @@ class BunBridge
                             yield $frame['data'] ?? '';
                         } elseif ($type === 'html-end') {
                             yield ['rscPayload' => $frame['rscPayload'] ?? ''];
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
 
                             break 2;
                         }
@@ -491,24 +467,12 @@ class BunBridge
 
             throw $e;
         } finally {
-            if ($streamClient !== null) {
-                socket_close($streamClient);
-            }
-
             if ($callbackClient !== null) {
                 socket_close($callbackClient);
             }
 
-            if ($streamServer !== null) {
-                socket_close($streamServer);
-            }
-
             if ($callbackServer !== null) {
                 socket_close($callbackServer);
-            }
-
-            if (file_exists($streamPath)) {
-                @unlink($streamPath);
             }
 
             if ($callbackPath !== null && file_exists($callbackPath)) {
@@ -560,9 +524,10 @@ class BunBridge
     }
 
     /**
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[]}
      */
-    private function rscWithCallbacks(string $component, array $props, CallableRegistry $registry): array
+    private function rscWithCallbacks(string $component, array $props, CallableRegistry $registry, array $layouts = []): array
     {
         $callbackPath = '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock';
         $callbackServer = null;
@@ -592,6 +557,7 @@ class BunBridge
                 'type' => 'rsc',
                 'component' => $component,
                 'props' => $props,
+                'layouts' => $layouts,
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 

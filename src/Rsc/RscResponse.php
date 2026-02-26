@@ -16,6 +16,9 @@ class RscResponse implements Responsable
 
     protected ?string $version = null;
 
+    /** @var list<array{component: string, props: array<string, mixed>}> */
+    protected array $layouts = [];
+
     /**
      * @param  array<string, mixed>  $props
      */
@@ -23,6 +26,27 @@ class RscResponse implements Responsable
         protected string $component,
         protected array $props = [],
     ) {}
+
+    /**
+     * Wrap the page in a layout component. Layouts are ordered outermost-first:
+     * `->layout('A')->layout('B')` produces `<A><B><Page /></B></A>`.
+     *
+     * Duplicate component names are ignored — first registration wins.
+     *
+     * @param  array<string, mixed>  $props
+     */
+    public function layout(string $component, array $props = []): static
+    {
+        foreach ($this->layouts as $existing) {
+            if ($existing['component'] === $component) {
+                return $this;
+            }
+        }
+
+        $this->layouts[] = ['component' => $component, 'props' => $props];
+
+        return $this;
+    }
 
     public function rootView(string $rootView): static
     {
@@ -67,7 +91,7 @@ class RscResponse implements Responsable
     protected function toStreamedRscResponse(string $version): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscStream($this->component, $this->props);
+        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts);
 
         // First yield is always the clientChunks array — read it eagerly
         // so we can set proper headers on the StreamedResponse object.
@@ -106,7 +130,7 @@ class RscResponse implements Responsable
     protected function toStreamedHtmlResponse(string $version, \Illuminate\Http\Request $request): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscHtmlStream($this->component, $this->props);
+        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts);
 
         // First yield: {clientChunks: [...]}
         $meta = $generator->current();
@@ -124,6 +148,7 @@ class RscResponse implements Responsable
             echo '<!DOCTYPE html><html><head>';
             echo '<meta charset="utf-8">';
             echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
+            echo '<style>*{margin:0;box-sizing:border-box}html,body{height:100%;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,sans-serif}</style>';
             echo '</head><body>';
             echo '<div id="rsc-root">';
             flush();
