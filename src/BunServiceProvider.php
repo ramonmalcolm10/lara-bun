@@ -3,10 +3,13 @@
 namespace RamonMalcolm\LaraBun;
 
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\HtmlString;
 use Illuminate\Support\ServiceProvider;
 use RamonMalcolm\LaraBun\Console\BunServeCommand;
+use RamonMalcolm\LaraBun\Console\RscActionManifestCommand;
 use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
+use RamonMalcolm\LaraBun\Rsc\RscActionController;
 
 class BunServiceProvider extends ServiceProvider
 {
@@ -39,6 +42,11 @@ class BunServiceProvider extends ServiceProvider
             $this->app->singleton(\Inertia\Ssr\Gateway::class, Ssr\BunSsrGateway::class);
         }
 
+        if (config('bun.rsc.enabled')) {
+            Route::post('/_rsc/action', RscActionController::class)
+                ->middleware('web');
+        }
+
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'lara-bun');
         $this->registerBladeDirectives();
 
@@ -53,6 +61,7 @@ class BunServiceProvider extends ServiceProvider
 
             $this->commands([
                 BunServeCommand::class,
+                RscActionManifestCommand::class,
             ]);
         }
     }

@@ -18,6 +18,10 @@ return [
         'callables' => [],
         'callables_dir' => null,
         'callback_timeout' => 5,
+        'actions' => [
+            // 'jsName' => 'CallableName.method',
+        ],
+        'actions_dir' => null,
     ],
 
     'entry_points' => array_filter(

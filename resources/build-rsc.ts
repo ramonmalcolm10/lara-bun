@@ -48,6 +48,75 @@ function isClientFile(filePath: string): boolean {
   }
 }
 
+function isServerActionFile(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const firstLine = content.split("\n")[0].trim();
+    return firstLine === '"use server";' || firstLine === "'use server';";
+  } catch {
+    return false;
+  }
+}
+
+interface ActionFileInfo {
+  importAlias: string;
+  relativePath: string;
+  absolutePath: string;
+  exports: string[];
+}
+
+const actionFiles: ActionFileInfo[] = [];
+
+// ─── Auto-generate server actions from PHP config ───────────────────────────
+
+const generatedActionsPath = join(sourceDir, "server-actions.generated.ts");
+
+try {
+  const proc = Bun.spawn(
+    ["php", "artisan", "rsc:action-manifest", "--no-interaction"],
+    { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
+  );
+
+  const output = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+
+  if (exitCode === 0) {
+    const actionMap: Record<string, string> = JSON.parse(output.trim());
+    const entries = Object.entries(actionMap);
+
+    if (entries.length > 0) {
+      const lines = [
+        `"use server";`,
+        `// @generated — do not edit. Defined in config/bun.php → rsc.actions`,
+        ``,
+      ];
+
+      for (const [jsName, phpCallable] of entries) {
+        lines.push(
+          `export async function ${jsName}(...args: unknown[]) {`,
+          `  return await (globalThis as any).php("${phpCallable}", ...args);`,
+          `}`,
+          ``
+        );
+      }
+
+      writeFileSync(generatedActionsPath, lines.join("\n"));
+      console.log(`Generated: ${generatedActionsPath} (${entries.length} action(s))`);
+    } else if (existsSync(generatedActionsPath)) {
+      rmSync(generatedActionsPath);
+      console.log(`Removed stale: ${generatedActionsPath}`);
+    }
+  } else {
+    const stderr = await new Response(proc.stderr).text();
+    console.warn(`Warning: rsc:action-manifest failed (exit ${exitCode}). Skipping action generation.`);
+    if (stderr.trim()) {
+      console.warn(stderr.trim());
+    }
+  }
+} catch (err) {
+  console.warn("Warning: Could not run rsc:action-manifest. Skipping action generation.", err);
+}
+
 // ─── Discover User Components ───────────────────────────────────────────────
 
 for await (const path of glob.scan(sourceDir)) {
@@ -60,8 +129,28 @@ for await (const path of glob.scan(sourceDir)) {
     continue;
   }
 
-  const name = basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
   const absolutePath = resolve(sourceDir, path);
+
+  // Server action files are NOT components — handle them separately
+  if (isServerActionFile(absolutePath)) {
+    const mod = await import(absolutePath);
+    const exports = Object.entries(mod)
+      .filter(([, v]) => typeof v === "function")
+      .map(([name]) => name);
+
+    if (exports.length > 0) {
+      actionFiles.push({
+        importAlias: `_A${actionFiles.length}`,
+        relativePath: `./${path}`,
+        absolutePath,
+        exports,
+      });
+    }
+
+    continue;
+  }
+
+  const name = basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
   const info: ComponentInfo = {
     name,
     importAlias: `_C${aliasIndex++}`,
@@ -128,6 +217,11 @@ serverComponents.forEach((c) => console.log(`  ${c.name} ← ${c.relativePath}`)
 if (clientComponents.length > 0) {
   console.log(`Found ${clientComponents.length} client component(s):`);
   clientComponents.forEach((c) => console.log(`  ${c.name} ← ${c.relativePath}`));
+}
+
+if (actionFiles.length > 0) {
+  console.log(`Found ${actionFiles.length} server action file(s):`);
+  actionFiles.forEach((a) => console.log(`  ${a.relativePath} → ${a.exports.join(", ")}`));
 }
 
 // Build a set of absolute paths for client files (for the plugin to intercept)
@@ -223,10 +317,40 @@ const clientManifestParam =
 const clientManifestArg =
   clientComponents.length > 0 ? "clientManifest" : "null";
 
+const actionImports = actionFiles
+  .map((a) => `import * as ${a.importAlias} from "${a.absolutePath}";`)
+  .join("\n");
+
+const actionRegistrations = actionFiles
+  .map(
+    (a) => `for (const [name, fn] of Object.entries(${a.importAlias})) {
+  if (typeof fn === "function") {
+    registerServerReference(fn, "${a.relativePath}", name);
+  }
+}`
+  )
+  .join("\n");
+
+const actionMapEntries = actionFiles
+  .map((a) => `  "${a.relativePath}": ${a.importAlias},`)
+  .join("\n");
+
+const hasActions = actionFiles.length > 0;
+
+const flightImports = hasActions
+  ? "import { renderToReadableStream, registerServerReference, decodeReply as _decodeReply } from \"react-server-dom-webpack/server.edge\";"
+  : "import { renderToReadableStream } from \"react-server-dom-webpack/server.edge\";";
+
+const actionReExports = hasActions
+  ? `\n// Re-export for rsc-handler (which cannot import server.edge directly)\nexport const decodeReply = _decodeReply;\nexport const renderActionStream = renderToReadableStream;\n`
+  : "";
+
 const entrySource = `// Auto-generated by lara-bun build-rsc — do not edit
-import { renderToReadableStream } from "react-server-dom-webpack/server.edge";
+${flightImports}
 import { createElement } from "react";
 ${serverImports}
+${hasActions ? actionImports : ''}
+${actionReExports}
 
 interface LayoutEntry {
   component: string;
@@ -236,7 +360,17 @@ interface LayoutEntry {
 const components: Record<string, React.ComponentType<any>> = {
 ${serverComponentMap}
 };
+${hasActions ? `
+${actionRegistrations}
 
+const actions: Record<string, Record<string, Function>> = {
+${actionMapEntries}
+};
+
+export function getServerAction(moduleId: string, name: string): Function | undefined {
+  return (actions[moduleId] as any)?.[name];
+}
+` : ''}
 function buildElement(
   component: string,
   props: Record<string, unknown>,
@@ -316,6 +450,22 @@ if (!serverResult.success) {
 }
 
 console.log(`Built server bundle: ${join(outDir, "entry.rsc.js")}`);
+
+// ─── Action Manifest ────────────────────────────────────────────────────────
+
+if (actionFiles.length > 0) {
+  const actionManifest: Record<string, string[]> = {};
+
+  for (const a of actionFiles) {
+    actionManifest[a.relativePath] = a.exports;
+  }
+
+  writeFileSync(
+    join(outDir, "action-manifest.json"),
+    JSON.stringify(actionManifest, null, 2)
+  );
+  console.log(`Generated: ${join(outDir, "action-manifest.json")}`);
+}
 
 // ─── Client Builds + Manifests ──────────────────────────────────────────────
 
@@ -459,10 +609,22 @@ for (const c of clientComponents) {
   };
 }
 
+// Server module map — used by SSR to resolve server action references in Flight payloads.
+// Format is flat: { [moduleId]: { id, chunks } }. The export name comes from the
+// "#exportName" suffix in the reference ID, not from the map structure.
+const serverModuleMap: Record<string, { id: string; chunks: string[] }> = {};
+
+for (const a of actionFiles) {
+  serverModuleMap[a.relativePath] = {
+    id: a.relativePath,
+    chunks: [],
+  };
+}
+
 const ssrManifest = {
   moduleMap: ssrModuleMap,
   moduleLoading: null,
-  serverModuleMap: {},
+  serverModuleMap,
 };
 
 writeFileSync(
