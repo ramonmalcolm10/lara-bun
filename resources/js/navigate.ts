@@ -17,6 +17,7 @@ interface CacheEntry {
 let version = "";
 let onNavigate: ((tree: ReactNode) => void) | null = null;
 let flightDeserializer: Deserializer | null = null;
+let activeController: AbortController | null = null;
 const cache = new Map<string, CacheEntry>();
 
 const DEFAULT_PREFETCH_TTL = 30_000;
@@ -33,12 +34,13 @@ export function setDeserializer(fn: Deserializer): void {
   flightDeserializer = fn;
 }
 
-function fetchRscPayload(url: string): Promise<Response> {
+function fetchRscPayload(url: string, signal?: AbortSignal): Promise<Response> {
   return fetch(url, {
     headers: {
       "X-RSC": "true",
       "X-RSC-Version": version,
     },
+    signal,
   }).then((response) => {
     if (response.status === 409) {
       const location = response.headers.get("X-RSC-Location");
@@ -82,7 +84,15 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
     }
   }
 
-  return flightDeserializer!(response.body!, {
+  // Tee the stream so we can capture the raw Flight payload for dev tools
+  const [streamForFlight, streamForCapture] = response.body!.tee();
+
+  new Response(streamForCapture).text().then((text) => {
+    (window as any).__RSC_PAYLOAD__ = text;
+    window.dispatchEvent(new CustomEvent("rsc-payload", { detail: text }));
+  });
+
+  return flightDeserializer!(streamForFlight, {
     callServer: async () => {
       throw new Error("Server actions not supported");
     },
@@ -93,27 +103,52 @@ export async function navigate(
   url: string,
   opts?: { replace?: boolean }
 ): Promise<void> {
-  const cached = cache.get(url);
-  let treePromise: Promise<ReactNode>;
+  // Abort any in-flight navigation
+  activeController?.abort();
 
-  if (cached && cached.expiresAt > Date.now()) {
-    treePromise = cached.tree;
-    cache.delete(url);
-  } else {
-    cache.delete(url);
-    const response = await fetchRscPayload(url);
-    treePromise = deserializeResponse(response);
+  // If the initial HTML stream is still loading (Suspense completions streaming),
+  // stop it so the single-threaded PHP server can handle the new request.
+  if (document.readyState === "loading") {
+    window.stop();
   }
 
-  const tree = await treePromise;
+  const controller = new AbortController();
+  activeController = controller;
 
-  if (opts?.replace) {
-    history.replaceState({ rscUrl: url }, "", url);
-  } else {
-    history.pushState({ rscUrl: url }, "", url);
+  try {
+    const cached = cache.get(url);
+    let treePromise: Promise<ReactNode>;
+
+    if (cached && cached.expiresAt > Date.now()) {
+      treePromise = cached.tree;
+      cache.delete(url);
+    } else {
+      cache.delete(url);
+      const response = await fetchRscPayload(url, controller.signal);
+      treePromise = deserializeResponse(response);
+    }
+
+    const tree = await treePromise;
+
+    // A newer navigation may have started while we were waiting
+    if (controller.signal.aborted) return;
+
+    if (opts?.replace) {
+      history.replaceState({ rscUrl: url }, "", url);
+    } else {
+      history.pushState({ rscUrl: url }, "", url);
+    }
+
+    onNavigate?.(tree);
+    window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") return;
+    throw err;
+  } finally {
+    if (activeController === controller) {
+      activeController = null;
+    }
   }
-
-  onNavigate?.(tree);
 }
 
 export function prefetch(url: string, cacheForMs?: number): void {

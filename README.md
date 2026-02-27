@@ -471,6 +471,16 @@ PHP                                          Bun
 
 Each render creates a unique callback socket path, so concurrent Octane requests don't interfere. Both sides clean up sockets in `finally` blocks.
 
+## Development Server
+
+When using `php artisan serve`, enable multiple workers so streaming responses don't block concurrent requests:
+
+```bash
+PHP_CLI_SERVER_WORKERS=4 php artisan serve --no-reload
+```
+
+PHP's built-in server is single-threaded by default. Without multiple workers, navigating away from a page that is still streaming (e.g. Suspense fallbacks resolving) will block until the stream completes. This is only a development concern — production servers (nginx + php-fpm, Octane, Herd) handle concurrent requests natively.
+
 ## Laravel Octane
 
 If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/octane.php` to keep the socket connection alive across requests:

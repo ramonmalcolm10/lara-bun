@@ -150,7 +150,7 @@ class BunBridge
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 
-            $timeout = (int) config('bun.rsc.callback_timeout', 30);
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 30);
             $callbackBuffer = '';
 
             // Accept callback connection if needed
@@ -159,7 +159,7 @@ class BunBridge
                 $write = [];
                 $except = [];
 
-                if (socket_select($read, $write, $except, $timeout) > 0) {
+                if (socket_select($read, $write, $except, $callbackTimeout) > 0) {
                     $accepted = socket_accept($callbackServer);
 
                     if ($accepted !== false) {
@@ -171,8 +171,6 @@ class BunBridge
                 }
             }
 
-            // Read stream frames from the main socket (same path as SSR).
-            // The Bun.listen drain handler handles backpressure for large responses.
             while (true) {
                 $read = [$mainSocket];
 
@@ -186,14 +184,10 @@ class BunBridge
 
                 $write = [];
                 $except = [];
-                $changed = socket_select($read, $write, $except, $timeout);
+                $changed = socket_select($read, $write, $except, null);
 
                 if ($changed === false) {
                     throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
-                }
-
-                if ($changed === 0) {
-                    throw new RuntimeException("RSC stream timed out after {$timeout} seconds");
                 }
 
                 if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
@@ -275,13 +269,11 @@ class BunBridge
                     $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
                 }
             }
-        } catch (\Throwable $e) {
+        } finally {
             if ($mainSocket !== null) {
                 socket_close($mainSocket);
             }
 
-            throw $e;
-        } finally {
             if ($callbackClient !== null) {
                 socket_close($callbackClient);
             }
@@ -338,7 +330,7 @@ class BunBridge
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 
-            $timeout = (int) config('bun.rsc.callback_timeout', 30);
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 30);
             $callbackBuffer = '';
 
             // Accept callback connection if needed
@@ -347,7 +339,7 @@ class BunBridge
                 $write = [];
                 $except = [];
 
-                if (socket_select($read, $write, $except, $timeout) > 0) {
+                if (socket_select($read, $write, $except, $callbackTimeout) > 0) {
                     $accepted = socket_accept($callbackServer);
 
                     if ($accepted !== false) {
@@ -359,8 +351,6 @@ class BunBridge
                 }
             }
 
-            // Read stream frames from the main socket (same path as SSR).
-            // The Bun.listen drain handler handles backpressure for large responses.
             while (true) {
                 $read = [$mainSocket];
 
@@ -374,14 +364,10 @@ class BunBridge
 
                 $write = [];
                 $except = [];
-                $changed = socket_select($read, $write, $except, $timeout);
+                $changed = socket_select($read, $write, $except, null);
 
                 if ($changed === false) {
                     throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
-                }
-
-                if ($changed === 0) {
-                    throw new RuntimeException("RSC HTML stream timed out after {$timeout} seconds");
                 }
 
                 if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
@@ -460,13 +446,11 @@ class BunBridge
                     $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
                 }
             }
-        } catch (\Throwable $e) {
+        } finally {
             if ($mainSocket !== null) {
                 socket_close($mainSocket);
             }
 
-            throw $e;
-        } finally {
             if ($callbackClient !== null) {
                 socket_close($callbackClient);
             }

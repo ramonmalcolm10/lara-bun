@@ -332,6 +332,7 @@ const ssrResult = await Bun.build({
   outdir: clientOutDir,
   target: "bun",
   naming: "[name].[ext]",
+  plugins: [packageAliasPlugin],
   external: ["react", "react-dom"],
   define: {
     "process.env.NODE_ENV": '"production"',
@@ -391,6 +392,7 @@ const browserResult = await Bun.build({
   splitting: true,
   minify: true,
   naming: "[name]-[hash].[ext]",
+  plugins: [packageAliasPlugin],
   define: {
     "process.env.NODE_ENV": '"production"',
   },
