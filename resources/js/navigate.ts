@@ -90,15 +90,7 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
     }
   }
 
-  // Tee the stream so we can capture the raw Flight payload for dev tools
-  const [streamForFlight, streamForCapture] = response.body!.tee();
-
-  new Response(streamForCapture).text().then((text) => {
-    (window as any).__RSC_PAYLOAD__ = text;
-    window.dispatchEvent(new CustomEvent("rsc-payload", { detail: text }));
-  });
-
-  return flightDeserializer!(streamForFlight, {
+  return flightDeserializer!(response.body!, {
     callServer: callServerFn ?? (async () => {
       throw new Error("Server actions not initialized");
     }),

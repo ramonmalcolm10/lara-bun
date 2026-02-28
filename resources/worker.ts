@@ -247,6 +247,7 @@ async function handleRscStreamMessage(
     await Bun.sleep(0);
 
     const reader = stream.getReader();
+    const decoder = new TextDecoder();
 
     while (true) {
       const { done, value } = await reader.read();
@@ -254,7 +255,7 @@ async function handleRscStreamMessage(
 
       const text = typeof value === "string"
         ? value
-        : new TextDecoder().decode(value);
+        : decoder.decode(value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
       await Bun.sleep(0);
     }
@@ -303,6 +304,7 @@ async function handleRscHtmlStreamMessage(
     await Bun.sleep(0);
 
     const reader = htmlStream.getReader();
+    const decoder = new TextDecoder();
 
     while (true) {
       const { done, value } = await reader.read();
@@ -310,7 +312,7 @@ async function handleRscHtmlStreamMessage(
 
       const text = typeof value === "string"
         ? value
-        : new TextDecoder().decode(value);
+        : decoder.decode(value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
       await Bun.sleep(0);
     }
@@ -358,6 +360,7 @@ async function handleRscActionMessage(
     await Bun.sleep(0);
 
     const reader = stream.getReader();
+    const decoder = new TextDecoder();
 
     while (true) {
       const { done, value } = await reader.read();
@@ -365,7 +368,7 @@ async function handleRscActionMessage(
 
       const text = typeof value === "string"
         ? value
-        : new TextDecoder().decode(value);
+        : decoder.decode(value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "action-chunk", data: text }));
       await Bun.sleep(0);
     }
@@ -420,11 +423,19 @@ function writeFrame(socket: SocketLike, json: string): void {
   header.writeUInt32BE(payload.length, 0);
 
   const frame = Buffer.concat([header, payload]);
-  const written = socket.write(frame);
 
+  // If there are pending writes from a previous partial write,
+  // queue this frame behind them to maintain frame ordering.
+  // Writing directly would interleave with pending data on the wire.
+  const existing = pendingWriteBuffers.get(socket);
+  if (existing) {
+    pendingWriteBuffers.set(socket, Buffer.concat([existing, frame]));
+    return;
+  }
+
+  const written = socket.write(frame);
   if (written < frame.length) {
-    const existing = pendingWriteBuffers.get(socket) ?? Buffer.alloc(0);
-    pendingWriteBuffers.set(socket, Buffer.concat([existing, frame.subarray(written)]));
+    pendingWriteBuffers.set(socket, frame.subarray(written));
   }
 }
 

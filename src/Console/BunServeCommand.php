@@ -53,9 +53,10 @@ class BunServeCommand extends Command
             ->unique()
             ->implode(',');
 
-        if (! $hasFunctionsDir && $entryPoints === '') {
+        if (! $hasFunctionsDir && $entryPoints === '' && $rscBundle === null) {
             $this->error('Nothing to serve. Create a functions directory at: '.$functionsDir);
             $this->error('Or enable SSR via BUN_SSR_ENABLED=true in your .env file.');
+            $this->error('Or enable RSC via BUN_RSC_ENABLED=true and run: bun run build:rsc');
 
             return self::FAILURE;
         }
@@ -311,6 +312,7 @@ class BunServeCommand extends Command
 
         if ($packageDir !== false) {
             $env['LARA_BUN_PACKAGE_DIR'] = $packageDir;
+            $env['NODE_PATH'] = $packageDir.'/node_modules';
         }
 
         return $env;
