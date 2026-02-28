@@ -139,18 +139,29 @@ class RscResponse implements Responsable
         $url = $request->getRequestUri();
         $component = $this->component;
 
-        return new StreamedResponse(function () use ($generator, $version, $url, $component, $clientChunks): void {
+        // Pre-render the Blade shell with placeholders so we can split it
+        // into head/tail and stream the RSC body between them.
+        $bodyMarker = '<!--__RSC_BODY__-->';
+        $initialMarker = '<!--__RSC_INITIAL__-->';
+        $scriptsMarker = '<!--__RSC_SCRIPTS__-->';
+        $rootView = $this->rootView ?? config('bun.rsc.root_view', 'lara-bun::rsc-app');
+
+        $shell = view($rootView, [
+            ...$this->viewData,
+            'body' => $bodyMarker,
+            'initialJson' => $initialMarker,
+            'scripts' => $scriptsMarker,
+        ])->render();
+
+        [$shellHead, $shellTail] = explode($bodyMarker, $shell, 2);
+
+        return new StreamedResponse(function () use ($generator, $version, $url, $component, $clientChunks, $shellHead, $shellTail): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
             }
 
             // HTML head — send immediately so the browser starts parsing
-            echo '<!DOCTYPE html><html><head>';
-            echo '<meta charset="utf-8">';
-            echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
-            echo '<style>*{margin:0;box-sizing:border-box}html,body{height:100%;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,sans-serif}</style>';
-            echo '</head><body>';
-            echo '<div id="rsc-root">';
+            echo $shellHead;
             flush();
 
             // Stream HTML body chunks from Bun (shell + Suspense completions)
@@ -172,21 +183,20 @@ class RscResponse implements Responsable
                 $generator->next();
             }
 
-            echo '</div>';
-
-            // RSC initial state for SPA navigation
+            // Replace the placeholder scripts/initial in the tail
             $initialJson = json_encode([
                 'url' => $url,
                 'component' => $component,
                 'version' => $version,
             ], JSON_THROW_ON_ERROR);
 
-            echo "<script>window.__RSC_INITIAL__ = {$initialJson};</script>";
+            $tail = str_replace(
+                [$initialMarker, $scriptsMarker],
+                [$initialJson, BunServiceProvider::renderRscScripts($rscPayload, $clientChunks)],
+                $shellTail,
+            );
 
-            // RSC payload + client component scripts for hydration
-            echo BunServiceProvider::renderRscScripts($rscPayload, $clientChunks);
-
-            echo '</body></html>';
+            echo $tail;
             flush();
         }, 200, [
             'Content-Type' => 'text/html; charset=utf-8',

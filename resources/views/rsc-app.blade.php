@@ -3,19 +3,12 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    @yield('head')
 </head>
 <body>
     <div id="rsc-root">{!! $body !!}</div>
 
-    <script>
-        window.__RSC_INITIAL__ = {
-            url: @json($url),
-            component: @json($component),
-            version: @json($version)
-        };
-    </script>
+    <script>window.__RSC_INITIAL__ = {!! $initialJson !!};</script>
 
-    @rscScripts($rscPayload, $clientChunks)
+    {!! $scripts !!}
 </body>
 </html>

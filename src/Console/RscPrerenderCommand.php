@@ -142,7 +142,7 @@ class RscPrerenderCommand extends Command
         );
 
         $version = $rscResponse->getVersion();
-        $html = $this->buildHtmlPage($url, $rscResponse->getComponent(), $version, $result);
+        $html = $this->buildHtmlPage($url, $rscResponse->getComponent(), $version, $result, $rscResponse);
 
         $path = trim($url, '/') ?: 'index';
         File::ensureDirectoryExists(dirname("{$outputPath}/{$path}.html"));
@@ -193,7 +193,7 @@ class RscPrerenderCommand extends Command
     /**
      * @param  array{body: string, rscPayload: string, clientChunks: string[]}  $result
      */
-    private function buildHtmlPage(string $url, string $component, string $version, array $result): string
+    private function buildHtmlPage(string $url, string $component, string $version, array $result, RscResponse $rscResponse): string
     {
         $initialJson = json_encode([
             'url' => $url,
@@ -202,16 +202,13 @@ class RscPrerenderCommand extends Command
         ], JSON_THROW_ON_ERROR);
 
         $scripts = BunServiceProvider::renderRscScripts($result['rscPayload'], $result['clientChunks']);
+        $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
 
-        return '<!DOCTYPE html><html><head>'
-            .'<meta charset="utf-8">'
-            .'<meta name="viewport" content="width=device-width, initial-scale=1">'
-            .'<style>*{margin:0;box-sizing:border-box}html,body{height:100%;background:#09090b;color:#fafafa;font-family:system-ui,-apple-system,sans-serif}</style>'
-            .'</head><body>'
-            .'<div id="rsc-root">'.$result['body'].'</div>'
-            ."<script>window.__RSC_INITIAL__ = {$initialJson};</script>"
-            .$scripts
-            .'</body></html>';
+        return view($rootView, [
+            'body' => $result['body'],
+            'initialJson' => $initialJson,
+            'scripts' => $scripts,
+        ])->render();
     }
 
     /**
