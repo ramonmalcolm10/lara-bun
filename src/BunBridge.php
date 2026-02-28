@@ -2,6 +2,7 @@
 
 namespace RamonMalcolm\LaraBun;
 
+use Illuminate\Validation\ValidationException;
 use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
 use RuntimeException;
 use Socket;
@@ -555,6 +556,8 @@ class BunBridge
                 if (in_array($mainSocket, $read, true)) {
                     $frame = $this->readFrame($mainSocket);
 
+                    $this->throwIfValidationError($frame);
+
                     if (isset($frame['error'])) {
                         throw new RuntimeException("Bun RSC action error: {$frame['error']}");
                     }
@@ -593,6 +596,8 @@ class BunBridge
                         }
 
                         $frame = $this->readFrame($mainSocket);
+
+                        $this->throwIfValidationError($frame);
 
                         if (isset($frame['error'])) {
                             throw new RuntimeException("Bun RSC action error: {$frame['error']}");
@@ -855,12 +860,30 @@ class BunBridge
             try {
                 $result = $registry->execute($function, $args);
                 $response = json_encode(['id' => $id, 'result' => $result], JSON_THROW_ON_ERROR);
+            } catch (ValidationException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'validation_errors' => $e->errors(),
+                    'error' => $e->getMessage(),
+                ], JSON_THROW_ON_ERROR);
             } catch (\Throwable $e) {
                 $response = json_encode(['id' => $id, 'error' => $e->getMessage()], JSON_THROW_ON_ERROR);
             }
 
             $this->writeFrame($socket, $response);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $frame
+     */
+    private function throwIfValidationError(array $frame): void
+    {
+        if (! isset($frame['validation_errors'])) {
+            return;
+        }
+
+        throw ValidationException::withMessages($frame['validation_errors']);
     }
 
     private function writeFrame(Socket $socket, string $json): void

@@ -21,6 +21,7 @@ import {
   navigate,
   prefetch,
 } from "./navigate";
+import { ServerValidationError } from "./errors";
 
 declare global {
   interface Window {
@@ -79,6 +80,13 @@ export function createRscApp(
     });
 
     if (!response.ok) {
+      if (response.status === 422) {
+        const body = await response.json();
+        throw new ServerValidationError(
+          body.message ?? "Validation failed",
+          body.errors ?? {}
+        );
+      }
       throw new Error(`Server action failed: ${response.status}`);
     }
 

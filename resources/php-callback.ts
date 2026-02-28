@@ -8,6 +8,7 @@
  */
 
 import type { Socket } from "bun";
+import { ServerValidationError } from "./errors";
 
 type SocketLike = Socket<undefined>;
 
@@ -57,7 +58,12 @@ export class PhpCallbackClient {
               if (pending) {
                 self.pendingCallbacks.delete(id);
 
-                if (response.error) {
+                if (response.validation_errors) {
+                  pending.reject(new ServerValidationError(
+                    response.error ?? "Validation failed",
+                    response.validation_errors
+                  ));
+                } else if (response.error) {
                   pending.reject(new Error(response.error));
                 } else {
                   pending.resolve(response.result);
