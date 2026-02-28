@@ -8,6 +8,7 @@
 
 type ReactNode = unknown;
 type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
+type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 
 interface CacheEntry {
   tree: Promise<ReactNode>;
@@ -17,6 +18,7 @@ interface CacheEntry {
 let version = "";
 let onNavigate: ((tree: ReactNode) => void) | null = null;
 let flightDeserializer: Deserializer | null = null;
+let callServerFn: CallServerFn | null = null;
 let activeController: AbortController | null = null;
 const cache = new Map<string, CacheEntry>();
 
@@ -32,6 +34,10 @@ export function setNavigateHandler(fn: (tree: ReactNode) => void): void {
 
 export function setDeserializer(fn: Deserializer): void {
   flightDeserializer = fn;
+}
+
+export function setCallServer(fn: CallServerFn): void {
+  callServerFn = fn;
 }
 
 function fetchRscPayload(url: string, signal?: AbortSignal): Promise<Response> {
@@ -93,9 +99,9 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
   });
 
   return flightDeserializer!(streamForFlight, {
-    callServer: async () => {
-      throw new Error("Server actions not supported");
-    },
+    callServer: callServerFn ?? (async () => {
+      throw new Error("Server actions not initialized");
+    }),
   });
 }
 

@@ -11,12 +11,13 @@
  * This file is the single import site for react-server-dom-webpack/client.browser
  * to avoid duplicate bundling by the Bun bundler.
  */
-import { createFromReadableStream } from "react-server-dom-webpack/client.browser";
+import { createFromReadableStream, encodeReply } from "react-server-dom-webpack/client.browser";
 import { hydrateRoot } from "react-dom/client";
 import {
   setVersion,
   setNavigateHandler,
   setDeserializer,
+  setCallServer,
   navigate,
   prefetch,
 } from "./navigate";
@@ -42,9 +43,52 @@ export function createRscApp(
     window.__RSC_MODULES__[id] = mod;
   }
 
+  // Server action caller — encodes args, POSTs to the action endpoint,
+  // and deserializes the Flight response
+  async function callServer(id: string, args: unknown[]): Promise<unknown> {
+    const encoded = await encodeReply(args);
+
+    // When encodeReply returns FormData (e.g. form submissions), the browser
+    // would send it as multipart/form-data which PHP auto-consumes from
+    // php://input. We serialize to raw bytes with an opaque content-type
+    // so PHP passes the body through untouched, and send the real
+    // content-type in a custom header for Bun's decodeReply.
+    let rawBody: BodyInit;
+    let realContentType: string;
+
+    if (encoded instanceof FormData) {
+      const tmp = new Response(encoded);
+      rawBody = await tmp.arrayBuffer();
+      realContentType = tmp.headers.get("content-type")!;
+    } else {
+      rawBody = encoded;
+      realContentType = "text/plain;charset=UTF-8";
+    }
+
+    const response = await fetch("/_rsc/action", {
+      method: "POST",
+      headers: {
+        "X-RSC-Action": id,
+        "X-RSC-Content-Type": realContentType,
+        "Content-Type": "application/octet-stream",
+        "X-XSRF-TOKEN": decodeURIComponent(
+          document.cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1] ?? ""
+        ),
+      },
+      body: rawBody,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server action failed: ${response.status}`);
+    }
+
+    return createFromReadableStream(response.body!, { callServer });
+  }
+
   // Inject the Flight deserializer into navigate.ts so it uses
   // the same react-server-dom-webpack instance as initial hydration
   setDeserializer(createFromReadableStream as any);
+  setCallServer(callServer);
 
   // Expose navigation globals for Link.tsx (cross-build-graph communication)
   window.__rsc_navigate = navigate;
@@ -69,11 +113,7 @@ export function createRscApp(
     },
   });
 
-  const rootPromise = createFromReadableStream(stream, {
-    callServer: async () => {
-      throw new Error("Server actions not supported");
-    },
-  });
+  const rootPromise = createFromReadableStream(stream, { callServer });
 
   Promise.resolve(rootPromise).then((reactTree: any) => {
     const root = hydrateRoot(container, reactTree);

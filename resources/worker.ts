@@ -11,7 +11,7 @@ interface LayoutEntry {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream";
+  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action";
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
@@ -19,6 +19,9 @@ interface IncomingMessage {
   props?: Record<string, unknown>;
   layouts?: LayoutEntry[];
   callbackSocket?: string;
+  actionId?: string;
+  body?: string;
+  contentType?: string;
 }
 
 function log(...args: unknown[]): void {
@@ -183,6 +186,12 @@ type RscHandlerModule = {
     callbackSocket?: string | null,
     layouts?: LayoutEntry[]
   ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }>;
+  handleAction: (
+    actionId: string,
+    body: string,
+    contentType: string,
+    callbackSocket?: string | null
+  ) => Promise<{ stream: ReadableStream }>;
 };
 
 let rscHandler: RscHandlerModule | null = null;
@@ -317,6 +326,60 @@ async function handleRscHtmlStreamMessage(
   }
 }
 
+/**
+ * Handles rsc-action messages (server action calls).
+ *
+ * Same streaming pattern as handleRscStreamMessage — writes Flight
+ * data frames back on the main socket with action-specific frame types.
+ */
+async function handleRscActionMessage(
+  mainSocket: SocketLike,
+  message: IncomingMessage
+): Promise<void> {
+  if (!rscHandler) {
+    writeFrame(mainSocket, '{"error":"RSC not enabled"}');
+    return;
+  }
+  if (!message.actionId) {
+    writeFrame(mainSocket, '{"error":"Missing actionId in rsc-action message"}');
+    return;
+  }
+
+  try {
+    const { stream } = await rscHandler.handleAction(
+      message.actionId,
+      message.body ?? "",
+      message.contentType ?? "text/plain",
+      message.callbackSocket ?? null
+    );
+
+    writeFrame(mainSocket, '{"type":"action-start"}');
+    await Bun.sleep(0);
+
+    const reader = stream.getReader();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = typeof value === "string"
+        ? value
+        : new TextDecoder().decode(value);
+      writeFrame(mainSocket, JSON.stringify({ type: "action-chunk", data: text }));
+      await Bun.sleep(0);
+    }
+
+    writeFrame(mainSocket, '{"type":"action-end"}');
+  } catch (err) {
+    const errorJson = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+    try {
+      writeFrame(mainSocket, errorJson);
+    } catch {
+      // Best effort
+    }
+  }
+}
+
 try {
   unlinkSync(socketPath);
 } catch {
@@ -380,12 +443,14 @@ const server = Bun.listen({
         try {
           const message = JSON.parse(jsonBytes.toString("utf-8")) as IncomingMessage;
 
-          if (message.type === "rsc-stream" || message.type === "rsc-html-stream") {
+          if (message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action") {
             // Run streaming outside the data handler so socket writes
             // are not corked by Bun's async callback buffering.
             const handler = message.type === "rsc-html-stream"
               ? handleRscHtmlStreamMessage
-              : handleRscStreamMessage;
+              : message.type === "rsc-action"
+                ? handleRscActionMessage
+                : handleRscStreamMessage;
             setTimeout(() => handler(socket, message), 0);
           } else {
             const response = await handleMessage(message);

@@ -466,6 +466,178 @@ class BunBridge
     }
 
     /**
+     * Execute a server action and stream the Flight result.
+     *
+     * Same streaming pattern as rscStream() but sends type "rsc-action"
+     * with the action ID and encoded arguments body.
+     *
+     * Yields Flight payload strings (no metadata prefix — action responses
+     * don't need clientChunks).
+     *
+     * @return \Generator<int, string, void, void>
+     */
+    public function rscAction(string $actionId, string $body, string $contentType = 'text/plain'): \Generator
+    {
+        $registry = app(CallableRegistry::class);
+        $hasCallbacks = $registry->hasCallables();
+
+        $callbackPath = $hasCallbacks ? '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock' : null;
+        $callbackServer = null;
+        $callbackClient = null;
+
+        $index = $this->currentWorker++ % $this->workerCount;
+        $mainSocket = $this->checkout($index);
+
+        try {
+            if ($hasCallbacks) {
+                $callbackServer = $this->createUnixServer($callbackPath);
+            }
+
+            $this->writeFrame($mainSocket, json_encode([
+                'type' => 'rsc-action',
+                'actionId' => $actionId,
+                'body' => $body,
+                'contentType' => $contentType,
+                'callbackSocket' => $callbackPath,
+            ], JSON_THROW_ON_ERROR));
+
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 30);
+            $callbackBuffer = '';
+
+            // Accept callback connection if needed
+            if ($callbackServer !== null) {
+                $read = [$callbackServer];
+                $write = [];
+                $except = [];
+
+                if (socket_select($read, $write, $except, $callbackTimeout) > 0) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+            }
+
+            while (true) {
+                $read = [$mainSocket];
+
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
+                }
+
+                if ($callbackClient !== null) {
+                    $read[] = $callbackClient;
+                }
+
+                $write = [];
+                $except = [];
+                $changed = socket_select($read, $write, $except, null);
+
+                if ($changed === false) {
+                    throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
+                }
+
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+
+                if (in_array($mainSocket, $read, true)) {
+                    $frame = $this->readFrame($mainSocket);
+
+                    if (isset($frame['error'])) {
+                        throw new RuntimeException("Bun RSC action error: {$frame['error']}");
+                    }
+
+                    $type = $frame['type'] ?? '';
+
+                    if ($type === 'action-start') {
+                        continue;
+                    }
+
+                    if ($type === 'action-chunk') {
+                        yield $frame['data'] ?? '';
+
+                        continue;
+                    }
+
+                    if ($type === 'action-end') {
+                        $this->release($index, $mainSocket);
+                        $mainSocket = null;
+
+                        break;
+                    }
+                }
+
+                if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
+                    // Drain available stream data before executing callback
+                    $streamEnded = false;
+
+                    while (! $streamEnded) {
+                        $streamCheck = [$mainSocket];
+                        $w = [];
+                        $e = [];
+
+                        if (socket_select($streamCheck, $w, $e, 0, 5000) <= 0) {
+                            break;
+                        }
+
+                        $frame = $this->readFrame($mainSocket);
+
+                        if (isset($frame['error'])) {
+                            throw new RuntimeException("Bun RSC action error: {$frame['error']}");
+                        }
+
+                        $type = $frame['type'] ?? '';
+
+                        if ($type === 'action-start') {
+                            // No-op, already started
+                        } elseif ($type === 'action-chunk') {
+                            yield $frame['data'] ?? '';
+                        } elseif ($type === 'action-end') {
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
+                            $streamEnded = true;
+                        }
+                    }
+
+                    if ($streamEnded) {
+                        break;
+                    }
+
+                    $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
+                }
+            }
+        } finally {
+            if ($mainSocket !== null) {
+                socket_close($mainSocket);
+            }
+
+            if ($callbackClient !== null) {
+                socket_close($callbackClient);
+            }
+
+            if ($callbackServer !== null) {
+                socket_close($callbackServer);
+            }
+
+            if ($callbackPath !== null && file_exists($callbackPath)) {
+                @unlink($callbackPath);
+            }
+        }
+    }
+
+    /**
      * @return array<int, string>
      */
     public function list(): array

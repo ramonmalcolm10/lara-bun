@@ -84,6 +84,30 @@ if (ssrManifest) {
   }
 }
 
+// Register server action modules as stubs for SSR reference resolution.
+// Actions aren't called during SSR — they're serialized as references for the browser.
+const actionManifestPath = join(bundleDir, "action-manifest.json");
+
+if (existsSync(actionManifestPath)) {
+  const actionManifest: Record<string, string[]> = JSON.parse(
+    readFileSync(actionManifestPath, "utf-8")
+  );
+
+  for (const [moduleId, exports] of Object.entries(actionManifest)) {
+    const stub: Record<string, Function> = {};
+
+    for (const name of exports) {
+      stub[name] = () => {
+        throw new Error(`Server action ${moduleId}#${name} cannot be called during SSR`);
+      };
+    }
+
+    ssrModules[moduleId] = stub;
+  }
+
+  console.error(`[rsc-handler] Registered ${Object.keys(actionManifest).length} action module(s) for SSR`);
+}
+
 // Set up globals for react-server-dom-webpack client
 (globalThis as any).__webpack_require__ = function (moduleId: string) {
   const mod = ssrModules[moduleId];
@@ -235,6 +259,101 @@ export async function handleRscHtmlStream(
   }
 
   return { htmlStream, rscPayloadPromise, clientChunks: browserChunks };
+}
+
+// ─── Action Handler (server actions) ──────────────────────────────────────────
+
+/**
+ * Handles a server action call.
+ * Decodes client-encoded arguments, executes the action function, and
+ * returns the result wrapped in a Flight payload stream.
+ */
+export async function handleAction(
+  actionId: string,
+  body: string,
+  contentType: string,
+  callbackSocket?: string | null
+): Promise<{ stream: ReadableStream }> {
+  if (typeof rscModule.getServerAction !== "function") {
+    throw new Error("No server actions registered. Rebuild with: bun run build:rsc");
+  }
+
+  // actionId format: "moduleId#exportName" (e.g., "./actions.ts#addTodo")
+  const hashIndex = actionId.indexOf("#");
+
+  if (hashIndex === -1) {
+    throw new Error(`Invalid action ID format: "${actionId}" (expected "moduleId#exportName")`);
+  }
+
+  const moduleId = actionId.slice(0, hashIndex);
+  const exportName = actionId.slice(hashIndex + 1);
+
+  const actionFn = rscModule.getServerAction(moduleId, exportName);
+
+  if (!actionFn) {
+    throw new Error(`Unknown server action: "${actionId}"`);
+  }
+
+  let client: PhpCallbackClient | null = null;
+
+  if (callbackSocket) {
+    client = new PhpCallbackClient();
+    await client.connect(callbackSocket);
+    (globalThis as any).php = client.call.bind(client);
+  }
+
+  try {
+    // Reconstruct the original body format for decodeReply.
+    // The client serializes FormData to raw bytes and sends with an opaque
+    // content-type to prevent PHP from consuming the body. We use the real
+    // content-type header to reconstruct FormData when needed.
+    let decodable: string | FormData;
+
+    if (contentType.includes("multipart/form-data")) {
+      const response = new Response(body, {
+        headers: { "Content-Type": contentType },
+      });
+      decodable = await response.formData();
+    } else {
+      decodable = body;
+    }
+
+    const args = await rscModule.decodeReply(decodable);
+    const result = await actionFn(...(args as unknown[]));
+
+    const stream = rscModule.renderActionStream(result, clientManifest ?? {});
+
+    // Wrap to clean up callback client when stream closes
+    if (client) {
+      const reader = stream.getReader();
+      const wrappedStream = new ReadableStream({
+        async pull(controller) {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            client!.disconnect();
+            delete (globalThis as any).php;
+          } else {
+            controller.enqueue(value);
+          }
+        },
+        cancel() {
+          reader.cancel();
+          client!.disconnect();
+          delete (globalThis as any).php;
+        },
+      });
+      return { stream: wrappedStream };
+    }
+
+    return { stream };
+  } catch (err) {
+    if (client) {
+      client.disconnect();
+      delete (globalThis as any).php;
+    }
+    throw err;
+  }
 }
 
 // ─── Handler (buffered, non-streaming) ───────────────────────────────────────
