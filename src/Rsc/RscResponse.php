@@ -225,6 +225,14 @@ class RscResponse implements Responsable
         return $this->layouts;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    public function getViewData(): array
+    {
+        return $this->viewData;
+    }
+
     public function getVersion(): string
     {
         return $this->version ?? $this->resolveVersion();

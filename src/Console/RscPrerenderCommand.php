@@ -205,6 +205,7 @@ class RscPrerenderCommand extends Command
         $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
 
         return view($rootView, [
+            ...$rscResponse->getViewData(),
             'body' => $result['body'],
             'initialJson' => $initialJson,
             'scripts' => $scripts,
