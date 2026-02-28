@@ -21,7 +21,7 @@ class BunServiceProvider extends ServiceProvider
 
         $this->app->singleton(BunBridge::class);
 
-        Route::macro('staticPaths', function (array $paths) {
+        \Illuminate\Routing\Route::macro('staticPaths', function (array $paths) {
             $this->defaults['_static_paths'] = $paths;
 
             return $this;
