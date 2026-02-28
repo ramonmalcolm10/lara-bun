@@ -312,7 +312,6 @@ class BunServeCommand extends Command
 
         if ($packageDir !== false) {
             $env['LARA_BUN_PACKAGE_DIR'] = $packageDir;
-            $env['NODE_PATH'] = $packageDir.'/node_modules';
         }
 
         return $env;

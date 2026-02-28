@@ -290,69 +290,7 @@ const packageAliasPlugin: BunPlugin = {
   },
 };
 
-// ─── React resolution plugin ─────────────────────────────────────────────────
-// Bun.build resolves from the generated entry file (bootstrap/rsc/), which walks
-// up to the project's node_modules. React lives in the *package's* node_modules
-// instead. This plugin resolves react, react-dom, and react-server-dom-webpack
-// from there — applying the "react-server" condition manually for server builds.
-
-const packageNodeModules = join(packageDir, "node_modules");
-
-function createReactResolvePlugin(serverCondition: boolean): BunPlugin {
-  const nm = packageNodeModules;
-
-  return {
-    name: serverCondition ? "react-server-resolve" : "react-resolve",
-    setup(build) {
-      build.onResolve({ filter: /^react(\/|$)/ }, (args) => {
-        if (args.path === "react") {
-          return { path: join(nm, serverCondition ? "react/react.react-server.js" : "react/index.js") };
-        }
-        if (args.path === "react/jsx-runtime") {
-          return { path: join(nm, serverCondition ? "react/jsx-runtime.react-server.js" : "react/jsx-runtime.js") };
-        }
-        if (args.path === "react/jsx-dev-runtime") {
-          return { path: join(nm, serverCondition ? "react/jsx-dev-runtime.react-server.js" : "react/jsx-dev-runtime.js") };
-        }
-        const subPath = args.path.replace(/^react\//, "");
-        const filePath = join(nm, "react", `${subPath}.js`);
-        if (existsSync(filePath)) return { path: filePath };
-        return undefined;
-      });
-
-      build.onResolve({ filter: /^react-dom(\/|$)/ }, (args) => {
-        if (args.path === "react-dom") {
-          return { path: join(nm, "react-dom/index.js") };
-        }
-        const subPath = args.path.replace(/^react-dom\//, "");
-        const filePath = join(nm, "react-dom", `${subPath}.js`);
-        if (existsSync(filePath)) return { path: filePath };
-        return undefined;
-      });
-
-      build.onResolve({ filter: /^react-server-dom-webpack(\/|$)/ }, (args) => {
-        if (args.path === "react-server-dom-webpack") {
-          return { path: join(nm, "react-server-dom-webpack/index.js") };
-        }
-        const subPath = args.path.replace(/^react-server-dom-webpack\//, "");
-        const filePath = join(nm, "react-server-dom-webpack", `${subPath}.js`);
-        if (existsSync(filePath)) return { path: filePath };
-        return undefined;
-      });
-    },
-  };
-}
-
-// Bail early if package node_modules is missing
-for (const pkg of ["react", "react-dom", "react-server-dom-webpack"]) {
-  if (!existsSync(join(packageNodeModules, pkg))) {
-    console.error(`Missing ${pkg} in ${packageNodeModules}`);
-    console.error("Run: cd " + packageDir + " && bun install");
-    process.exit(1);
-  }
-}
-
-const serverPlugins: BunPlugin[] = [packageAliasPlugin, createReactResolvePlugin(true)];
+const serverPlugins: BunPlugin[] = [packageAliasPlugin];
 if (clientComponents.length > 0) {
   serverPlugins.push(useClientPlugin);
 }
@@ -604,7 +542,7 @@ const browserResult = await Bun.build({
   splitting: true,
   minify: true,
   naming: "[name]-[hash].[ext]",
-  plugins: [packageAliasPlugin, createReactResolvePlugin(false)],
+  plugins: [packageAliasPlugin],
   define: {
     "process.env.NODE_ENV": '"production"',
   },
