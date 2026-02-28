@@ -22,6 +22,7 @@ return [
             // 'jsName' => 'CallableName.method',
         ],
         'actions_dir' => null,
+        'static_path' => env('BUN_RSC_STATIC_PATH', storage_path('framework/rsc-static')),
     ],
 
     'entry_points' => array_filter(

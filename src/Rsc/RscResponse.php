@@ -194,6 +194,32 @@ class RscResponse implements Responsable
         ]);
     }
 
+    public function getComponent(): string
+    {
+        return $this->component;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getProps(): array
+    {
+        return $this->props;
+    }
+
+    /**
+     * @return list<array{component: string, props: array<string, mixed>}>
+     */
+    public function getLayouts(): array
+    {
+        return $this->layouts;
+    }
+
+    public function getVersion(): string
+    {
+        return $this->version ?? $this->resolveVersion();
+    }
+
     protected function resolveVersion(): string
     {
         $buildDir = public_path('build/rsc');

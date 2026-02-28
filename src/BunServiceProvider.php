@@ -8,6 +8,8 @@ use Illuminate\Support\HtmlString;
 use Illuminate\Support\ServiceProvider;
 use RamonMalcolm\LaraBun\Console\BunServeCommand;
 use RamonMalcolm\LaraBun\Console\RscActionManifestCommand;
+use RamonMalcolm\LaraBun\Console\RscPrerenderCommand;
+use RamonMalcolm\LaraBun\Http\Middleware\ServeStaticRsc;
 use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
 use RamonMalcolm\LaraBun\Rsc\RscActionController;
 
@@ -18,6 +20,12 @@ class BunServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/bun.php', 'bun');
 
         $this->app->singleton(BunBridge::class);
+
+        Route::macro('staticPaths', function (array $paths) {
+            $this->defaults['_static_paths'] = $paths;
+
+            return $this;
+        });
 
         $this->app->singleton(CallableRegistry::class, function ($app) {
             $registry = new CallableRegistry($app);
@@ -45,6 +53,13 @@ class BunServiceProvider extends ServiceProvider
         if (config('bun.rsc.enabled')) {
             Route::post('/_rsc/action', RscActionController::class)
                 ->middleware('web');
+
+            $this->app['router']->aliasMiddleware('rsc.static', ServeStaticRsc::class);
+
+            if (file_exists(base_path('routes/rsc-static.php'))) {
+                Route::middleware(ServeStaticRsc::class)
+                    ->group(base_path('routes/rsc-static.php'));
+            }
         }
 
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'lara-bun');
@@ -62,6 +77,7 @@ class BunServiceProvider extends ServiceProvider
             $this->commands([
                 BunServeCommand::class,
                 RscActionManifestCommand::class,
+                RscPrerenderCommand::class,
             ]);
         }
     }
