@@ -274,6 +274,12 @@ Lara Bun can render React Server Components (RSC) to HTML via the Unix socket. A
 
 ### 1. Enable RSC
 
+Install the required npm dependencies:
+
+```bash
+bun add react react-dom react-server-dom-webpack
+```
+
 Add to your `.env`:
 
 ```env
@@ -355,6 +361,38 @@ php artisan rsc:pages
 
 Shows a table of all discovered routes with their URL, component, layouts, type (static/dynamic), middleware, and domain.
 
+### Navigation
+
+The package ships a `Link` component for SPA navigation between RSC pages. On click, it fetches the Flight payload instead of doing a full page load.
+
+```tsx
+import Link from 'lara-bun/Link';
+
+<Link href="/docs/installation">Docs</Link>
+```
+
+**Props:**
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `href` | `string` | — | Target URL |
+| `prefetch` | `"hover" \| "mount" \| "click" \| "none" \| boolean` | `"hover"` | When to prefetch the route |
+| `cacheFor` | `number` | `30000` | Prefetch cache TTL in milliseconds |
+| `replace` | `boolean` | `false` | Replace current history entry instead of pushing |
+| `preserveScroll` | `boolean` | `false` | Keep scroll position after navigation (default scrolls to top) |
+
+By default, navigation scrolls to the top of the page. Use `preserveScroll` to opt out:
+
+```tsx
+<Link href="/docs/rsc" preserveScroll>Stay here</Link>
+```
+
+You can also navigate programmatically via the global `__rsc_navigate`:
+
+```ts
+window.__rsc_navigate('/about', { preserveScroll: true });
+```
+
 ### 3. Build the RSC bundle
 
 ```bash
@@ -362,6 +400,23 @@ bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts
 ```
 
 Components inside `app/` get path-based names (e.g., `app/docs/[slug]/page`). Components outside `app/` use flat basename naming.
+
+During development, use `--watch` to auto-rebuild on file changes:
+
+```bash
+bun --watch vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts
+```
+
+Or add both scripts to your `package.json`:
+
+```json
+{
+  "scripts": {
+    "build:rsc": "bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts",
+    "dev:rsc": "bun --watch vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts"
+  }
+}
+```
 
 ### 4. Pre-render static pages
 
