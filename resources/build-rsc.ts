@@ -683,3 +683,95 @@ writeFileSync(
   JSON.stringify(browserChunks, null, 2)
 );
 console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
+
+// ─── Route Summary ──────────────────────────────────────────────────────────
+// Scan app/ directory for page.* files and print static/dynamic route table
+
+const appDir = join(sourceDir, "app");
+
+if (existsSync(appDir)) {
+  const pageGlob = new Bun.Glob("**/page.{tsx,ts,jsx,js}");
+  const routes: { url: string; isDynamic: boolean; reason: string }[] = [];
+
+  for await (const pagePath of pageGlob.scan(appDir)) {
+    const dir = pagePath.replace(/\/page\.(tsx|ts|jsx|js)$/, "") || "";
+    const segments = dir ? dir.split("/") : [];
+
+    const urlSegments: string[] = [];
+    let hasDynamicSegment = false;
+    let isCatchAll = false;
+
+    for (const segment of segments) {
+      // Route groups: (groupName) → no URL segment
+      if (/^\(.*\)$/.test(segment)) continue;
+
+      // Catch-all: [...param]
+      if (/^\[\.\.\.(\w+)\]$/.test(segment)) {
+        const param = segment.match(/^\[\.\.\.(\w+)\]$/)![1];
+        urlSegments.push(`{${param}}`);
+        hasDynamicSegment = true;
+        isCatchAll = true;
+        continue;
+      }
+
+      // Dynamic: [param]
+      if (/^\[(\w+)\]$/.test(segment)) {
+        const param = segment.match(/^\[(\w+)\]$/)![1];
+        urlSegments.push(`{${param}}`);
+        hasDynamicSegment = true;
+        continue;
+      }
+
+      urlSegments.push(segment);
+    }
+
+    const url = "/" + urlSegments.join("/");
+
+    // Check for route.php that forces dynamic
+    const pageDir = dir ? join(appDir, dir) : appDir;
+    const routePhp = join(pageDir, "route.php");
+    let forcedDynamic = false;
+
+    if (existsSync(routePhp)) {
+      try {
+        const content = readFileSync(routePhp, "utf-8");
+        if (content.includes("forceDynamic")) {
+          forcedDynamic = true;
+        }
+      } catch {}
+    }
+
+    const isDynamic = hasDynamicSegment || forcedDynamic;
+    let reason = "";
+    if (isCatchAll) reason = "catch-all";
+    else if (hasDynamicSegment) reason = "dynamic params";
+    else if (forcedDynamic) reason = "forceDynamic()";
+
+    routes.push({ url, isDynamic, reason });
+  }
+
+  routes.sort((a, b) => a.url.localeCompare(b.url));
+
+  if (routes.length > 0) {
+    const maxUrl = Math.max(...routes.map((r) => r.url.length), 5);
+
+    console.log("");
+    console.log("Route (app)");
+    console.log(`${"─".repeat(maxUrl + 20)}`);
+
+    for (const route of routes) {
+      const symbol = route.isDynamic ? "λ" : "○";
+      const padded = route.url.padEnd(maxUrl + 2);
+      const detail = route.reason ? ` (${route.reason})` : "";
+      console.log(`${symbol}  ${padded}${route.isDynamic ? "Dynamic" : "Static"}${detail}`);
+    }
+
+    const staticCount = routes.filter((r) => !r.isDynamic).length;
+    const dynamicCount = routes.filter((r) => r.isDynamic).length;
+
+    console.log("");
+    console.log("○  Static    prerendered as static HTML");
+    console.log("λ  Dynamic   server-rendered on demand");
+    console.log(`\n${staticCount} static, ${dynamicCount} dynamic`);
+  }
+}
