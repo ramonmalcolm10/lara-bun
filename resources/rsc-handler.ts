@@ -363,15 +363,70 @@ export async function handleRsc(
   props: Record<string, unknown>,
   callbackSocket?: string | null,
   layouts: LayoutEntry[] = []
-): Promise<{ body: string; rscPayload: string; clientChunks: string[] }> {
+): Promise<{ body: string; rscPayload: string; clientChunks: string[]; usedDynamicApis: boolean }> {
   // Create per-render callback client if a callback socket is provided
   let client: PhpCallbackClient | null = null;
+  let usedDynamicApis = false;
 
   if (callbackSocket) {
     client = new PhpCallbackClient();
     await client.connect(callbackSocket);
-    (globalThis as any).php = client.call.bind(client);
+    const originalCall = client.call.bind(client);
+    (globalThis as any).php = (...args: unknown[]) => {
+      usedDynamicApis = true;
+      return originalCall(...args);
+    };
   }
+
+  // Track dynamic API usage during render.
+  // Any call to these APIs during prerender marks the page as dynamic,
+  // similar to how Next.js detects dynamic rendering at build time.
+  const originalFetch = globalThis.fetch;
+  const originalMathRandom = Math.random;
+  const OriginalDate = globalThis.Date;
+  const originalRandomUUID = crypto.randomUUID.bind(crypto);
+  const originalGetRandomValues = crypto.getRandomValues.bind(crypto);
+
+  const markDynamic = () => { usedDynamicApis = true; };
+
+  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+    markDynamic();
+    return originalFetch(...args);
+  }) as typeof fetch;
+
+  Math.random = () => {
+    markDynamic();
+    return originalMathRandom();
+  };
+
+  // Proxy Date to detect new Date() (no args), Date() as function, and Date.now()
+  globalThis.Date = new Proxy(OriginalDate, {
+    construct(target, args) {
+      if (args.length === 0) markDynamic();
+      return Reflect.construct(target, args);
+    },
+    apply(target, thisArg, args) {
+      // Date() called without new always returns current time string
+      markDynamic();
+      return Reflect.apply(target, thisArg, args);
+    },
+    get(target, prop, receiver) {
+      if (prop === "now") {
+        return () => { markDynamic(); return OriginalDate.now(); };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as DateConstructor;
+
+  crypto.randomUUID = () => {
+    markDynamic();
+    return originalRandomUUID();
+  };
+
+  crypto.getRandomValues = <T extends ArrayBufferView | null>(array: T): T => {
+    markDynamic();
+    return originalGetRandomValues(array);
+  };
 
   try {
     // Step 1: Render component to RSC Flight payload
@@ -402,8 +457,13 @@ export async function handleRsc(
 
     const body = await new Response(htmlStream).text();
 
-    return { body, rscPayload, clientChunks: browserChunks };
+    return { body, rscPayload, clientChunks: browserChunks, usedDynamicApis };
   } finally {
+    globalThis.fetch = originalFetch;
+    Math.random = originalMathRandom;
+    globalThis.Date = OriginalDate;
+    crypto.randomUUID = originalRandomUUID;
+    crypto.getRandomValues = originalGetRandomValues;
     if (client) {
       client.disconnect();
       delete (globalThis as any).php;

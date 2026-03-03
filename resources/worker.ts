@@ -174,7 +174,7 @@ type RscHandlerModule = {
     props: Record<string, unknown>,
     callbackSocket?: string | null,
     layouts?: LayoutEntry[]
-  ) => Promise<{ body: string; rscPayload: string; clientChunks: string[] }>;
+  ) => Promise<{ body: string; rscPayload: string; clientChunks: string[]; usedDynamicApis: boolean }>;
   handleRscStream: (
     component: string,
     props: Record<string, unknown>,

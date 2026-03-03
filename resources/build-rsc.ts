@@ -38,75 +38,6 @@ const serverComponents: ComponentInfo[] = [];
 const clientComponents: ComponentInfo[] = [];
 let aliasIndex = 0;
 
-// Track which files directly call php()
-const filesUsingPhp = new Set<string>();
-// Track server component import graph: file -> set of imported server files
-const serverImportGraph = new Map<string, Set<string>>();
-
-function fileUsesPhp(filePath: string): boolean {
-  try {
-    let content = readFileSync(filePath, "utf-8");
-    // Strip template literals and string literals to avoid matching code examples
-    content = content.replace(/`[^`]*`/gs, "");
-    content = content.replace(/"[^"]*"/g, "");
-    content = content.replace(/'[^']*'/g, "");
-    // Match php( or php<...>( calls — the global callable
-    return /\bphp\s*[<(]/.test(content);
-  } catch {
-    return false;
-  }
-}
-
-function getImportedFiles(filePath: string, baseDir: string): string[] {
-  try {
-    const content = readFileSync(filePath, "utf-8");
-    const imports: string[] = [];
-    // Match import statements with relative paths
-    const regex = /import\s+.*?from\s+['"](\.[^'"]+)['"]/g;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(content)) !== null) {
-      const importPath = match[1];
-      const dir = filePath.substring(0, filePath.lastIndexOf("/"));
-      const resolved = resolve(dir, importPath);
-      // Try with extensions
-      const extensions = ["", ".tsx", ".ts", ".jsx", ".js"];
-      for (const ext of extensions) {
-        const candidate = resolved + ext;
-        if (existsSync(candidate)) {
-          imports.push(candidate);
-          break;
-        }
-      }
-    }
-    return imports;
-  } catch {
-    return [];
-  }
-}
-
-function pageUsesPhp(pageAbsolutePath: string): boolean {
-  const visited = new Set<string>();
-  const stack = [pageAbsolutePath];
-
-  while (stack.length > 0) {
-    const file = stack.pop()!;
-    if (visited.has(file)) continue;
-    visited.add(file);
-
-    if (filesUsingPhp.has(file)) return true;
-
-    // Only follow server component imports (not client components)
-    const imports = serverImportGraph.get(file);
-    if (imports) {
-      for (const imp of imports) {
-        stack.push(imp);
-      }
-    }
-  }
-
-  return false;
-}
-
 function isClientFile(filePath: string): boolean {
   try {
     const content = readFileSync(filePath, "utf-8");
@@ -238,12 +169,6 @@ for await (const path of glob.scan(sourceDir)) {
     clientComponents.push(info);
   } else {
     serverComponents.push(info);
-
-    // Track php() usage and import graph for server components
-    if (fileUsesPhp(absolutePath)) {
-      filesUsingPhp.add(absolutePath);
-    }
-    serverImportGraph.set(absolutePath, new Set(getImportedFiles(absolutePath, sourceDir)));
   }
 }
 
@@ -546,26 +471,6 @@ if (actionFiles.length > 0) {
     JSON.stringify(actionManifest, null, 2)
   );
   console.log(`Generated: ${join(outDir, "action-manifest.json")}`);
-}
-
-// ─── Pages Manifest (php() usage detection) ────────────────────────────────
-
-const pagesManifest: Record<string, { usesPHP: boolean }> = {};
-
-for (const comp of serverComponents) {
-  // Only page components inside app/
-  if (!comp.name.startsWith("app/") || !comp.name.endsWith("/page")) {
-    continue;
-  }
-  pagesManifest[comp.name] = { usesPHP: pageUsesPhp(comp.absolutePath) };
-}
-
-if (Object.keys(pagesManifest).length > 0) {
-  writeFileSync(
-    join(outDir, "pages-manifest.json"),
-    JSON.stringify(pagesManifest, null, 2)
-  );
-  console.log(`Generated: ${join(outDir, "pages-manifest.json")}`);
 }
 
 // ─── Client Builds + Manifests ──────────────────────────────────────────────

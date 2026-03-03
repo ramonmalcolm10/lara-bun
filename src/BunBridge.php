@@ -83,7 +83,7 @@ class BunBridge
 
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
-     * @return array{body: string, rscPayload: string, clientChunks: string[]}
+     * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
     public function rsc(string $component, array $props = [], array $layouts = []): array
     {
@@ -686,7 +686,7 @@ class BunBridge
 
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
-     * @return array{body: string, rscPayload: string, clientChunks: string[]}
+     * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
     private function rscWithCallbacks(string $component, array $props, CallableRegistry $registry, array $layouts = []): array
     {

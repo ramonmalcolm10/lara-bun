@@ -7,18 +7,9 @@ use RamonMalcolm\LaraBun\Http\Middleware\ServeStaticRsc;
 
 class PageRouteRegistrar
 {
-    /** @var array<string, array{usesPHP: bool}> */
-    protected array $pagesManifest = [];
-
     public function __construct(
         protected Router $router,
-    ) {
-        $manifestPath = base_path('bootstrap/rsc/pages-manifest.json');
-
-        if (file_exists($manifestPath)) {
-            $this->pagesManifest = json_decode(file_get_contents($manifestPath), true) ?? [];
-        }
-    }
+    ) {}
 
     /**
      * @param  list<PageDefinition>  $pages
@@ -119,12 +110,12 @@ class PageRouteRegistrar
         }
 
         // Determine static/dynamic status
-        // Priority: forceStatic() > dynamic() > php() detection > [param] segments > default static
+        // Non-parameterized routes are static by default (prerender detects dynamic API usage at runtime)
+        // forceDynamic() opts out of static serving; forceStatic() overrides everything
         $forceStatic = $pageConfig instanceof PageRoute && $pageConfig->isForceStatic();
         $forceDynamic = $pageConfig instanceof PageRoute && $pageConfig->isDynamic();
-        $usesPHP = ($this->pagesManifest[$page->componentName]['usesPHP'] ?? false);
 
-        if ($forceStatic || (! $forceDynamic && ! $page->isDynamic && ! $usesPHP)) {
+        if ($forceStatic || (! $forceDynamic && ! $page->isDynamic)) {
             $middleware[] = ServeStaticRsc::class;
         }
 

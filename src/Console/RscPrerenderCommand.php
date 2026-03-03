@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\File;
 use RamonMalcolm\LaraBun\BunBridge;
 use RamonMalcolm\LaraBun\BunServiceProvider;
 use RamonMalcolm\LaraBun\Http\Middleware\ServeStaticRsc;
+use RamonMalcolm\LaraBun\Rsc\PageRoute;
 use RamonMalcolm\LaraBun\Rsc\RscResponse;
 use Symfony\Component\Process\Process;
 
@@ -51,9 +52,11 @@ class RscPrerenderCommand extends Command
         $rendered = 0;
 
         foreach ($routes as $route) {
+            $forceStatic = $this->isForceStatic($route);
+
             foreach ($this->resolveUrls($route) as $url) {
                 try {
-                    $this->prerenderUrl($url, $route, $outputPath);
+                    $this->prerenderUrl($url, $route, $outputPath, $forceStatic);
                     $rendered++;
                 } catch (\Throwable $e) {
                     $this->error("  Failed {$url}: {$e->getMessage()}");
@@ -122,7 +125,7 @@ class RscPrerenderCommand extends Command
         })->all();
     }
 
-    private function prerenderUrl(string $url, Route $route, string $outputPath): void
+    private function prerenderUrl(string $url, Route $route, string $outputPath, bool $forceStatic = false): void
     {
         $this->line("  {$url}");
 
@@ -139,6 +142,12 @@ class RscPrerenderCommand extends Command
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
         );
+
+        if (! $forceStatic && ($result['usedDynamicApis'] ?? false)) {
+            $this->line("  <fg=yellow>↳ Dynamic</> — skipped");
+
+            return;
+        }
 
         $version = $rscResponse->getVersion();
         $html = $this->buildHtmlPage($url, $rscResponse->getComponent(), $version, $result, $rscResponse);
@@ -219,6 +228,25 @@ class RscPrerenderCommand extends Command
             'initialJson' => $initialJson,
             'scripts' => $scripts,
         ])->render();
+    }
+
+    private function isForceStatic(Route $route): bool
+    {
+        $configPaths = $route->defaults['_rsc_config_paths'] ?? [];
+
+        foreach ($configPaths as $path) {
+            if (! file_exists($path)) {
+                continue;
+            }
+
+            $config = require $path;
+
+            if ($config instanceof PageRoute && $config->isForceStatic()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
