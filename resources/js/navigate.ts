@@ -40,6 +40,13 @@ export function setCallServer(fn: CallServerFn): void {
   callServerFn = fn;
 }
 
+export function getCallServer(): CallServerFn {
+  if (!callServerFn) {
+    throw new Error("callServer not initialized. Ensure createRscApp() has been called.");
+  }
+  return callServerFn;
+}
+
 function fetchRscPayload(url: string, signal?: AbortSignal): Promise<Response> {
   return fetch(url, {
     headers: {

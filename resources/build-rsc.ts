@@ -540,6 +540,42 @@ if (container) {
 const hydrateEntryPath = join(outDir, "entry.hydrate.tsx");
 writeFileSync(hydrateEntryPath, hydrateEntrySource);
 
+// Plugin that intercepts imports of "use server" files in the browser build
+// and replaces them with createServerReference stubs that call through the
+// Flight action protocol instead of executing server code in the browser.
+const useServerPlugin: BunPlugin = {
+  name: "use-server-browser-stub",
+  setup(build) {
+    for (const action of actionFiles) {
+      const escaped = action.absolutePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      build.onLoad({ filter: new RegExp(`^${escaped}$`) }, () => {
+        const navigatePath = join(packageJsDir, "navigate.ts");
+        const exports = action.exports
+          .map(
+            (name) =>
+              `export const ${name} = createServerReference("${action.relativePath}#${name}", callServer);`
+          )
+          .join("\n");
+
+        return {
+          contents: `
+import { createServerReference } from "react-server-dom-webpack/client.browser";
+import { getCallServer } from "${navigatePath}";
+function callServer(id, args) { return getCallServer()(id, args); }
+${exports}
+`,
+          loader: "js",
+        };
+      });
+    }
+  },
+};
+
+const browserPlugins: BunPlugin[] = [packageAliasPlugin];
+if (actionFiles.length > 0) {
+  browserPlugins.push(useServerPlugin);
+}
+
 const browserResult = await Bun.build({
   entrypoints: [hydrateEntryPath],
   outdir: browserOutDir,
@@ -548,7 +584,7 @@ const browserResult = await Bun.build({
   splitting: true,
   minify: true,
   naming: "[name]-[hash].[ext]",
-  plugins: [packageAliasPlugin],
+  plugins: browserPlugins,
   define: {
     "process.env.NODE_ENV": '"production"',
   },
