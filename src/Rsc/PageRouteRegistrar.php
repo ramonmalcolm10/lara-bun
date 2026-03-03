@@ -110,7 +110,10 @@ class PageRouteRegistrar
         }
 
         // Auto-static: non-dynamic pages get ServeStaticRsc middleware
-        if (! $page->isDynamic) {
+        // Unless route.php explicitly calls ->dynamic()
+        $forcedDynamic = $pageConfig instanceof PageRoute && $pageConfig->isDynamic();
+
+        if (! $page->isDynamic && ! $forcedDynamic) {
             $middleware[] = ServeStaticRsc::class;
         }
 

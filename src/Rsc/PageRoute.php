@@ -20,6 +20,8 @@ class PageRoute
 
     protected ?string $nameValue = null;
 
+    protected bool $forceDynamic = false;
+
     /** @var array<string, string> */
     protected array $whereConstraints = [];
 
@@ -70,6 +72,13 @@ class PageRoute
         return $this;
     }
 
+    public function dynamic(): static
+    {
+        $this->forceDynamic = true;
+
+        return $this;
+    }
+
     public function where(string $param, string $pattern): static
     {
         $this->whereConstraints[$param] = $pattern;
@@ -111,6 +120,11 @@ class PageRoute
     public function getName(): ?string
     {
         return $this->nameValue;
+    }
+
+    public function isDynamic(): bool
+    {
+        return $this->forceDynamic;
     }
 
     /**
