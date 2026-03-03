@@ -76,7 +76,7 @@ class PageRoute
         return $this;
     }
 
-    public function dynamic(): static
+    public function forceDynamic(): static
     {
         $this->forceDynamic = true;
 
