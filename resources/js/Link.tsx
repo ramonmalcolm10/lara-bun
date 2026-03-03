@@ -15,6 +15,7 @@ interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"
   prefetch?: PrefetchStrategy;
   cacheFor?: number;
   replace?: boolean;
+  preserveScroll?: boolean;
 }
 
 function isExternalUrl(url: string): boolean {
@@ -42,6 +43,7 @@ export default function Link({
   prefetch: prefetchProp = "hover",
   cacheFor,
   replace = false,
+  preserveScroll = false,
   children,
   onClick,
   onMouseEnter,
@@ -92,9 +94,9 @@ export default function Link({
       e.preventDefault();
 
       const nav = (window as any).__rsc_navigate;
-      nav?.(href, { replace });
+      nav?.(href, { replace, preserveScroll });
     },
-    [href, replace, onClick]
+    [href, replace, preserveScroll, onClick]
   );
 
   const handleMouseEnter = useCallback(

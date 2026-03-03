@@ -99,7 +99,7 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
 
 export async function navigate(
   url: string,
-  opts?: { replace?: boolean }
+  opts?: { replace?: boolean; preserveScroll?: boolean }
 ): Promise<void> {
   // Abort any in-flight navigation
   activeController?.abort();
@@ -138,6 +138,11 @@ export async function navigate(
     }
 
     onNavigate?.(tree);
+
+    if (!opts?.preserveScroll) {
+      window.scrollTo(0, 0);
+    }
+
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return;

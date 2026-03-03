@@ -155,7 +155,7 @@ class RscResponse implements Responsable
 
         [$shellHead, $shellTail] = explode($bodyMarker, $shell, 2);
 
-        return new StreamedResponse(function () use ($generator, $version, $url, $component, $clientChunks, $shellHead, $shellTail): void {
+        return new StreamedResponse(function () use ($generator, $version, $url, $component, $clientChunks, $shellHead, $shellTail, $initialMarker, $scriptsMarker): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
             }
