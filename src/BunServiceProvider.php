@@ -26,14 +26,10 @@ class BunServiceProvider extends ServiceProvider
         $this->app->singleton(CallableRegistry::class, function ($app) {
             $registry = new CallableRegistry($app);
 
-            foreach (config('bun.rsc.callables', []) as $name => $callable) {
-                $registry->register($name, $callable);
-            }
+            $directory = app_path('RSC');
 
-            $callablesDir = config('bun.rsc.callables_dir');
-
-            if ($callablesDir !== null) {
-                $registry->discoverFrom($callablesDir);
+            if (is_dir($directory)) {
+                $registry->discoverFrom($directory);
             }
 
             return $registry;
