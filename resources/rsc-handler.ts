@@ -168,7 +168,7 @@ export async function handleRscStream(
         const { done, value } = await reader.read();
         if (done) {
           controller.close();
-          client!.disconnect();
+          try { client!.disconnect(); } catch {}
           delete (globalThis as any).php;
         } else {
           controller.enqueue(value);
@@ -176,7 +176,7 @@ export async function handleRscStream(
       },
       cancel() {
         reader.cancel();
-        client!.disconnect();
+        try { client!.disconnect(); } catch {}
         delete (globalThis as any).php;
       },
     });
@@ -244,7 +244,7 @@ export async function handleRscHtmlStream(
           controller.close();
           // Flight payload should also be done by now
           await rscPayloadPromise.catch(() => {});
-          client!.disconnect();
+          try { client!.disconnect(); } catch {}
           delete (globalThis as any).php;
         } else {
           controller.enqueue(value);
@@ -252,7 +252,7 @@ export async function handleRscHtmlStream(
       },
       cancel() {
         reader.cancel();
-        client!.disconnect();
+        try { client!.disconnect(); } catch {}
         delete (globalThis as any).php;
       },
     });
@@ -332,7 +332,7 @@ export async function handleAction(
           const { done, value } = await reader.read();
           if (done) {
             controller.close();
-            client!.disconnect();
+            try { client!.disconnect(); } catch {}
             delete (globalThis as any).php;
           } else {
             controller.enqueue(value);
@@ -340,7 +340,7 @@ export async function handleAction(
         },
         cancel() {
           reader.cancel();
-          client!.disconnect();
+          try { client!.disconnect(); } catch {}
           delete (globalThis as any).php;
         },
       });
@@ -350,7 +350,7 @@ export async function handleAction(
     return { stream };
   } catch (err) {
     if (client) {
-      client.disconnect();
+      try { client.disconnect(); } catch {}
       delete (globalThis as any).php;
     }
     throw err;
@@ -466,7 +466,7 @@ export async function handleRsc(
     crypto.randomUUID = originalRandomUUID;
     crypto.getRandomValues = originalGetRandomValues;
     if (client) {
-      client.disconnect();
+      try { client.disconnect(); } catch {}
       delete (globalThis as any).php;
     }
   }

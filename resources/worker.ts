@@ -518,3 +518,14 @@ function shutdown(signal: string): void {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+// Prevent unhandled errors from crashing the worker process.
+// These can occur during socket cleanup (e.g., callback socket closed by PHP)
+// or from deferred React rendering microtasks.
+process.on("uncaughtException", (err) => {
+  log("Uncaught exception (worker kept alive):", err.message);
+});
+
+process.on("unhandledRejection", (reason) => {
+  log("Unhandled rejection (worker kept alive):", reason instanceof Error ? reason.message : String(reason));
+});

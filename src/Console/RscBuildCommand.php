@@ -10,7 +10,7 @@ use Symfony\Component\Process\Process;
 
 class RscBuildCommand extends Command
 {
-    protected $signature = 'rsc:build {--clean : Remove existing static files} {--skip-prerender : Build bundles only}';
+    protected $signature = 'rsc:build {--clean : Remove existing static files} {--skip-prerender : Build bundles only} {--skip-bundle : Pre-render only (assumes bundles are already built)}';
 
     protected $description = 'Build RSC bundles and pre-render static pages';
 
@@ -22,21 +22,23 @@ class RscBuildCommand extends Command
             return self::FAILURE;
         }
 
-        // Step 1: Bundle via Bun
-        $this->info('Building RSC bundles...');
-        $this->newLine();
+        // Step 1: Bundle via Bun (unless --skip-bundle)
+        if (! $this->option('skip-bundle')) {
+            $this->info('Building RSC bundles...');
+            $this->newLine();
 
-        $bundleProcess = new Process(['bun', $this->getBuildScript()], base_path());
-        $bundleProcess->setTimeout(120);
-        $bundleProcess->run(fn ($type, $buffer) => $this->output->write($buffer));
+            $bundleProcess = new Process(['bun', $this->getBuildScript()], base_path());
+            $bundleProcess->setTimeout(120);
+            $bundleProcess->run(fn ($type, $buffer) => $this->output->write($buffer));
 
-        if (! $bundleProcess->isSuccessful()) {
-            $this->error('Bundle build failed.');
+            if (! $bundleProcess->isSuccessful()) {
+                $this->error('Bundle build failed.');
 
-            return self::FAILURE;
+                return self::FAILURE;
+            }
+
+            $this->newLine();
         }
-
-        $this->newLine();
 
         if ($this->option('skip-prerender')) {
             $this->info('Bundles built successfully (prerender skipped).');
