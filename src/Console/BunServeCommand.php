@@ -6,7 +6,7 @@ use Illuminate\Console\Command;
 
 class BunServeCommand extends Command
 {
-    protected $signature = 'bun:serve {--socket= : Path to the Unix socket}';
+    protected $signature = 'bun:serve {--socket= : Path to the Unix socket} {--watch : Auto-restart workers when RSC build output changes}';
 
     protected $description = 'Start the Bun bridge server';
 
@@ -15,6 +15,8 @@ class BunServeCommand extends Command
 
     /** @var array<int, string> */
     private array $socketPaths = [];
+
+    private int $lastBuildTime = 0;
 
     public function handle(): int
     {
@@ -65,6 +67,8 @@ class BunServeCommand extends Command
             return $this->serveSingle($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $rscBundle);
         }
 
+        $this->lastBuildTime = $this->getBuildTime();
+
         return $this->serveMultiple($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $workerCount, $rscBundle);
     }
 
@@ -80,6 +84,93 @@ class BunServeCommand extends Command
         $this->info("Starting Bun bridge on {$socketPath}");
         $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath);
 
+        if (! $this->option('watch')) {
+            return $this->runBlocking($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $rscBundle);
+        }
+
+        $this->socketPaths[0] = $socketPath;
+        $this->lastBuildTime = $this->getBuildTime();
+        $this->trapSignals();
+
+        $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+
+        if ($process === null) {
+            $this->error('Failed to start Bun process');
+
+            return self::FAILURE;
+        }
+
+        $this->processes[0] = $process;
+        $this->info('Watching for RSC build changes...');
+
+        while (true) {
+            pcntl_signal_dispatch();
+
+            if ($this->processes === []) {
+                return self::SUCCESS;
+            }
+
+            // Check if the build output changed
+            $currentBuildTime = $this->getBuildTime();
+
+            if ($currentBuildTime > $this->lastBuildTime) {
+                $this->lastBuildTime = $currentBuildTime;
+                $this->newLine();
+                $this->info('Build change detected — restarting worker...');
+
+                $this->shutdownAll();
+
+                // Small delay for the build to finish writing all files
+                usleep(500_000);
+
+                $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+
+                if ($process === null) {
+                    $this->error('Failed to restart worker');
+
+                    return self::FAILURE;
+                }
+
+                $this->processes[0] = $process;
+                $this->info('Worker restarted.');
+            }
+
+            // Check if the worker died
+            $status = proc_get_status($this->processes[0]);
+
+            if (! $status['running']) {
+                proc_close($this->processes[0]);
+
+                if ($status['exitcode'] !== 0) {
+                    $this->warn("Worker exited with code {$status['exitcode']}, restarting...");
+
+                    $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+
+                    if ($process === null) {
+                        $this->error('Failed to restart worker');
+
+                        return self::FAILURE;
+                    }
+
+                    $this->processes[0] = $process;
+                } else {
+                    unset($this->processes[0]);
+                }
+            }
+
+            usleep(100_000); // 100ms
+        }
+    }
+
+    private function runBlocking(
+        string $socketPath,
+        string $functionsDir,
+        bool $hasFunctionsDir,
+        string $entryPoints,
+        string $workerPath,
+        string $bunPath,
+        ?string $rscBundle = null,
+    ): int {
         $env = $this->buildWorkerEnv($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         $process = proc_open(
@@ -191,11 +282,43 @@ class BunServeCommand extends Command
         string $entryPoints,
         ?string $rscBundle = null,
     ): int {
+        $watching = $this->option('watch');
+
         while (true) {
             pcntl_signal_dispatch();
 
             if ($this->processes === []) {
                 return self::SUCCESS;
+            }
+
+            if ($watching) {
+                $currentBuildTime = $this->getBuildTime();
+
+                if ($currentBuildTime > $this->lastBuildTime) {
+                    $this->lastBuildTime = $currentBuildTime;
+                    $this->newLine();
+                    $this->info('Build change detected — restarting all workers...');
+
+                    $this->shutdownAll();
+                    usleep(500_000);
+
+                    foreach ($this->socketPaths as $i => $socketPath) {
+                        $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+
+                        if ($process === null) {
+                            $this->error("Failed to restart worker {$i}, shutting down");
+                            $this->shutdownAll();
+
+                            return self::FAILURE;
+                        }
+
+                        $this->processes[$i] = $process;
+                    }
+
+                    $this->info('All workers restarted.');
+
+                    continue;
+                }
             }
 
             foreach ($this->processes as $i => $process) {
@@ -337,6 +460,13 @@ class BunServeCommand extends Command
             base_path('bootstrap/ssr/ssr.mjs'),
             base_path('bootstrap/ssr/ssr.js'),
         ])->filter()->first(fn (string $path) => file_exists($path));
+    }
+
+    private function getBuildTime(): int
+    {
+        $chunksPath = base_path('bootstrap/rsc/browser-chunks.json');
+
+        return file_exists($chunksPath) ? (int) filemtime($chunksPath) : 0;
     }
 
     private function findBun(): ?string
