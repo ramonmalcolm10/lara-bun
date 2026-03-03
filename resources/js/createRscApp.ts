@@ -35,6 +35,62 @@ declare global {
   }
 }
 
+/**
+ * Force-initialize Flight chunks that are stuck in "resolved_model" state.
+ *
+ * When the entire Flight payload is delivered in a single ReadableStream chunk
+ * (initial page load), async reference chunks ($@ in Flight protocol) receive
+ * their data but stay in "resolved_model" status — an intermediate state where
+ * the raw data is stored but not yet deserialized. The chunk only transitions
+ * to "fulfilled" when its .then() method is called, which triggers the
+ * internal initializer (W7 in the minified build).
+ *
+ * React's use() hook checks thenable.status === "fulfilled" directly without
+ * calling .then() first. If it finds an unrecognized status string like
+ * "resolved_model", it throws the thenable (Suspense). During hydration this
+ * causes a mismatch: the server HTML has the resolved content but the client
+ * tree shows the fallback.
+ *
+ * This function walks the deserialized React tree and calls .then() on any
+ * Flight chunks found, synchronously converting them to "fulfilled" so use()
+ * can read their values without suspending.
+ */
+function initializeFlightChunks(value: unknown, seen = new WeakSet<object>()): void {
+  if (value === null || value === undefined || typeof value !== "object") return;
+  if (seen.has(value)) return;
+  seen.add(value);
+
+  const v = value as any;
+
+  // Flight chunk: has .then() and a string status
+  if (typeof v.then === "function" && typeof v.status === "string") {
+    // Trigger initialization (converts "resolved_model" → "fulfilled")
+    if (v.status !== "fulfilled" && v.status !== "rejected" && v.status !== "pending") {
+      v.then(() => {}, () => {});
+    }
+
+    // After initialization, recurse into the resolved value
+    if (v.status === "fulfilled" && v.value != null && typeof v.value === "object") {
+      initializeFlightChunks(v.value, seen);
+    }
+    return;
+  }
+
+  // Array (children, etc.)
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      initializeFlightChunks(value[i], seen);
+    }
+    return;
+  }
+
+  // React element or plain object: recurse into all own properties
+  const keys = Object.keys(v);
+  for (let i = 0; i < keys.length; i++) {
+    initializeFlightChunks(v[keys[i]], seen);
+  }
+}
+
 export function createRscApp(
   container: HTMLElement,
   initialModules: Record<string, unknown>
@@ -124,6 +180,7 @@ export function createRscApp(
   const rootPromise = createFromReadableStream(stream, { callServer });
 
   Promise.resolve(rootPromise).then((reactTree: any) => {
+    initializeFlightChunks(reactTree);
     const root = hydrateRoot(container, reactTree);
 
     // Wire up SPA navigation: subsequent navigations re-render the root
