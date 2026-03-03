@@ -53,8 +53,8 @@ class RscBuildCommand extends Command
             File::deleteDirectory($outputPath);
         }
 
-        // Step 3: Start Bun worker
-        $bunProcess = $prerender->ensureBunWorker();
+        // Step 3: Start fresh Bun worker (force restart since bundles just changed)
+        $bunProcess = $prerender->ensureBunWorker(forceRestart: ! $this->option('skip-bundle'));
 
         if ($bunProcess === false) {
             $this->error('Bun worker failed to start.');

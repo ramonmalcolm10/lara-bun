@@ -184,17 +184,27 @@ class PrerenderService
      *
      * @return Process|null|false Process if started, null if already running, false on failure
      */
-    public function ensureBunWorker(): Process|null|false
+    public function ensureBunWorker(bool $forceRestart = false): Process|null|false
     {
         $socketPath = config('bun.socket_path', '/tmp/bun-bridge.sock');
 
         if (file_exists($socketPath)) {
-            try {
-                app(BunBridge::class)->ping();
+            if ($forceRestart) {
+                // Kill existing worker so we start fresh with new bundles
+                try {
+                    app(BunBridge::class)->disconnect();
+                } catch (\Throwable) {
+                }
 
-                return null;
-            } catch (\Throwable) {
                 @unlink($socketPath);
+            } else {
+                try {
+                    app(BunBridge::class)->ping();
+
+                    return null;
+                } catch (\Throwable) {
+                    @unlink($socketPath);
+                }
             }
         }
 
