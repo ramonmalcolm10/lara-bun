@@ -694,7 +694,7 @@ if (existsSync(appDir)) {
   const routes: { url: string; isDynamic: boolean; reason: string }[] = [];
 
   for await (const pagePath of pageGlob.scan(appDir)) {
-    const dir = pagePath.replace(/\/page\.(tsx|ts|jsx|js)$/, "") || "";
+    const dir = pagePath.replace(/\/?page\.(tsx|ts|jsx|js)$/, "");
     const segments = dir ? dir.split("/") : [];
 
     const urlSegments: string[] = [];
