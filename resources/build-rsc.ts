@@ -690,8 +690,9 @@ console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
 const appDir = join(sourceDir, "app");
 
 if (existsSync(appDir)) {
+  type RouteType = "static" | "ssg" | "dynamic";
   const pageGlob = new Bun.Glob("**/page.{tsx,ts,jsx,js}");
-  const routes: { url: string; isDynamic: boolean; reason: string }[] = [];
+  const routes: { url: string; type: RouteType; detail: string }[] = [];
 
   for await (const pagePath of pageGlob.scan(appDir)) {
     const dir = pagePath.replace(/\/?page\.(tsx|ts|jsx|js)$/, "");
@@ -727,10 +728,11 @@ if (existsSync(appDir)) {
 
     const url = "/" + urlSegments.join("/");
 
-    // Check for route.php that forces dynamic
+    // Check route.php for forceDynamic / staticPaths
     const pageDir = dir ? join(appDir, dir) : appDir;
     const routePhp = join(pageDir, "route.php");
     let forcedDynamic = false;
+    let hasStaticPaths = false;
 
     if (existsSync(routePhp)) {
       try {
@@ -738,40 +740,65 @@ if (existsSync(appDir)) {
         if (content.includes("forceDynamic")) {
           forcedDynamic = true;
         }
+        if (content.includes("staticPaths")) {
+          hasStaticPaths = true;
+        }
       } catch {}
     }
 
-    const isDynamic = hasDynamicSegment || forcedDynamic;
-    let reason = "";
-    if (isCatchAll) reason = "catch-all";
-    else if (hasDynamicSegment) reason = "dynamic params";
-    else if (forcedDynamic) reason = "forceDynamic()";
+    // Determine route type:
+    // - Static: no dynamic segments, not forceDynamic
+    // - SSG: has dynamic segments but provides staticPaths
+    // - Dynamic: has dynamic segments without staticPaths, or forceDynamic
+    let type: RouteType;
+    let detail = "";
 
-    routes.push({ url, isDynamic, reason });
+    if (forcedDynamic) {
+      type = "dynamic";
+      detail = "forceDynamic()";
+    } else if (hasDynamicSegment && hasStaticPaths) {
+      type = "ssg";
+      detail = "staticPaths()";
+    } else if (hasDynamicSegment) {
+      type = "dynamic";
+      detail = isCatchAll ? "catch-all" : "dynamic params";
+    } else {
+      type = "static";
+    }
+
+    routes.push({ url, type, detail });
   }
 
   routes.sort((a, b) => a.url.localeCompare(b.url));
 
   if (routes.length > 0) {
     const maxUrl = Math.max(...routes.map((r) => r.url.length), 5);
+    const symbols: Record<RouteType, string> = { static: "○", ssg: "●", dynamic: "λ" };
+    const labels: Record<RouteType, string> = { static: "Static", ssg: "SSG", dynamic: "Dynamic" };
 
     console.log("");
     console.log("Route (app)");
-    console.log(`${"─".repeat(maxUrl + 20)}`);
+    console.log(`${"─".repeat(maxUrl + 22)}`);
 
     for (const route of routes) {
-      const symbol = route.isDynamic ? "λ" : "○";
       const padded = route.url.padEnd(maxUrl + 2);
-      const detail = route.reason ? ` (${route.reason})` : "";
-      console.log(`${symbol}  ${padded}${route.isDynamic ? "Dynamic" : "Static"}${detail}`);
+      const detail = route.detail ? ` (${route.detail})` : "";
+      console.log(`${symbols[route.type]}  ${padded}${labels[route.type]}${detail}`);
     }
 
-    const staticCount = routes.filter((r) => !r.isDynamic).length;
-    const dynamicCount = routes.filter((r) => r.isDynamic).length;
+    const staticCount = routes.filter((r) => r.type === "static").length;
+    const ssgCount = routes.filter((r) => r.type === "ssg").length;
+    const dynamicCount = routes.filter((r) => r.type === "dynamic").length;
 
     console.log("");
     console.log("○  Static    prerendered as static HTML");
+    console.log("●  SSG       static with generated params (staticPaths)");
     console.log("λ  Dynamic   server-rendered on demand");
-    console.log(`\n${staticCount} static, ${dynamicCount} dynamic`);
+
+    const parts = [];
+    if (staticCount) parts.push(`${staticCount} static`);
+    if (ssgCount) parts.push(`${ssgCount} SSG`);
+    if (dynamicCount) parts.push(`${dynamicCount} dynamic`);
+    console.log(`\n${parts.join(", ")}`);
   }
 }
