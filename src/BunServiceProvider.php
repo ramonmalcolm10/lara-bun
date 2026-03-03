@@ -32,6 +32,12 @@ class BunServiceProvider extends ServiceProvider
                 $registry->discoverFrom($directory);
             }
 
+            $actionsDir = app_path('Rsc/Actions');
+
+            if (is_dir($actionsDir)) {
+                $registry->discoverFrom($actionsDir);
+            }
+
             return $registry;
         });
     }
