@@ -186,7 +186,7 @@ type RscHandlerModule = {
     props: Record<string, unknown>,
     callbackSocket?: string | null,
     layouts?: LayoutEntry[]
-  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }>;
+  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[]; flushCallbacks?: () => Promise<void> }>;
   handleAction: (
     actionId: string,
     body: string,
@@ -292,7 +292,7 @@ async function handleRscHtmlStreamMessage(
   }
 
   try {
-    const { htmlStream, rscPayloadPromise, clientChunks } =
+    const { htmlStream, rscPayloadPromise, clientChunks, flushCallbacks } =
       await rscHandler.handleRscHtmlStream(
         message.component,
         message.props ?? {},
@@ -305,6 +305,7 @@ async function handleRscHtmlStreamMessage(
 
     const reader = htmlStream.getReader();
     const decoder = new TextDecoder();
+    let callbacksFlushed = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -315,6 +316,15 @@ async function handleRscHtmlStreamMessage(
         : decoder.decode(value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
       await Bun.sleep(0);
+
+      // After the first HTML chunk (shell), connect to PHP and send deferred
+      // callback requests. This ensures the shell HTML reaches PHP before
+      // callback processing begins, so the browser gets Suspense fallbacks
+      // immediately instead of blocking on slow PHP callables.
+      if (!callbacksFlushed && flushCallbacks) {
+        callbacksFlushed = true;
+        flushCallbacks(); // Fire-and-forget — runs concurrently
+      }
     }
 
     const rscPayload = await rscPayloadPromise;

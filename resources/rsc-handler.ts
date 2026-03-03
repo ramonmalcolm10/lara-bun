@@ -221,13 +221,65 @@ export async function handleRscHtmlStream(
   props: Record<string, unknown>,
   callbackSocket?: string | null,
   layouts: LayoutEntry[] = []
-): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }> {
+): Promise<{
+  htmlStream: ReadableStream;
+  rscPayloadPromise: Promise<string>;
+  clientChunks: string[];
+  flushCallbacks?: () => Promise<void>;
+}> {
   let cleanup: (() => void) | null = null;
+  let flushCallbacks: (() => Promise<void>) | undefined;
 
   if (callbackSocket) {
-    const client = new PhpCallbackClient();
-    await client.connect(callbackSocket);
-    cleanup = installPhp(client);
+    // Deferred callback pattern: queue php() calls during Flight rendering,
+    // connect to PHP only after the HTML shell is flushed to the browser.
+    // This prevents the callback handler (which may execute slow PHP callables)
+    // from blocking HTML streaming — the browser receives the shell with
+    // Suspense fallbacks immediately, then gets completion scripts after
+    // the callbacks resolve.
+    const pendingCalls: Array<{
+      fn: string;
+      args: unknown[];
+      resolve: (value: unknown) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+
+    let client: PhpCallbackClient | null = null;
+
+    const deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
+      if (client) {
+        return client.call(functionName, ...args);
+      }
+      return new Promise((resolve, reject) => {
+        pendingCalls.push({ fn: functionName, args, resolve, reject });
+      });
+    };
+    (globalThis as any).php = deferredPhpFn;
+
+    flushCallbacks = async () => {
+      const c = new PhpCallbackClient();
+      await c.connect(callbackSocket);
+      client = c;
+
+      for (const call of pendingCalls) {
+        c.call(call.fn, ...call.args).then(call.resolve, call.reject);
+      }
+      pendingCalls.length = 0;
+    };
+
+    cleanup = () => {
+      for (const call of pendingCalls) {
+        call.reject(new Error("PHP callback closed before flush"));
+      }
+      pendingCalls.length = 0;
+
+      if (client) {
+        try { client.disconnect(); } catch {}
+      }
+      if ((globalThis as any).php === deferredPhpFn) {
+        delete (globalThis as any).php;
+      }
+    };
   }
 
   // Render Flight as a stream (progressive — Suspense boundaries emit lazily)
@@ -262,7 +314,6 @@ export async function handleRscHtmlStream(
         const { done, value } = await reader.read();
         if (done) {
           controller.close();
-          // Flight payload should also be done by now
           await rscPayloadPromise.catch(() => {});
           cleanupFn();
         } else {
@@ -274,10 +325,10 @@ export async function handleRscHtmlStream(
         cleanupFn();
       },
     });
-    return { htmlStream: wrappedStream, rscPayloadPromise, clientChunks: browserChunks };
+    return { htmlStream: wrappedStream, rscPayloadPromise, clientChunks: browserChunks, flushCallbacks };
   }
 
-  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks };
+  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks, flushCallbacks };
 }
 
 // ─── Action Handler (server actions) ──────────────────────────────────────────
