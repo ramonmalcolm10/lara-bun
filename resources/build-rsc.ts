@@ -87,7 +87,7 @@ try {
     if (entries.length > 0) {
       const lines = [
         `"use server";`,
-        `// @generated — do not edit. Auto-discovered from app/RSC/Actions/`,
+        `// @generated — do not edit. Auto-discovered from app/Rsc/Actions/`,
         ``,
       ];
 
