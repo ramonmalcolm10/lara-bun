@@ -8,8 +8,8 @@ use Illuminate\Support\HtmlString;
 use Illuminate\Support\ServiceProvider;
 use RamonMalcolm\LaraBun\Console\BunServeCommand;
 use RamonMalcolm\LaraBun\Console\RscActionManifestCommand;
+use RamonMalcolm\LaraBun\Console\RscBuildCommand;
 use RamonMalcolm\LaraBun\Console\RscPagesCommand;
-use RamonMalcolm\LaraBun\Console\RscPrerenderCommand;
 use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
 use RamonMalcolm\LaraBun\Rsc\PageRouteRegistrar;
 use RamonMalcolm\LaraBun\Rsc\PageScanner;
@@ -77,8 +77,8 @@ class BunServiceProvider extends ServiceProvider
             $this->commands([
                 BunServeCommand::class,
                 RscActionManifestCommand::class,
+                RscBuildCommand::class,
                 RscPagesCommand::class,
-                RscPrerenderCommand::class,
             ]);
         }
     }

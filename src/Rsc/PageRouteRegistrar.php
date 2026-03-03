@@ -109,22 +109,16 @@ class PageRouteRegistrar
             }
         }
 
-        // Determine static/dynamic status
-        // Non-parameterized routes are static by default (prerender detects dynamic API usage at runtime)
-        // forceDynamic() opts out of static serving; forceStatic() overrides everything
-        $forceStatic = $pageConfig instanceof PageRoute && $pageConfig->isForceStatic();
-        $forceDynamic = $pageConfig instanceof PageRoute && $pageConfig->isDynamic();
+        // All RSC routes get static middleware — ServeStaticRsc checks for
+        // prerendered files and falls through to dynamic rendering if absent.
+        // The rsc:build command determines static vs dynamic at build time.
+        $middleware[] = ServeStaticRsc::class;
 
-        if ($forceStatic || (! $forceDynamic && ! $page->isDynamic)) {
-            $middleware[] = ServeStaticRsc::class;
-        }
-
-        // Dynamic pages with staticPaths also get static middleware
+        // Store staticPaths for parameterized routes (used during prerender URL expansion)
         if ($page->isDynamic && $pageConfig instanceof PageRoute) {
             $staticPaths = $pageConfig->getStaticPaths();
 
             if ($staticPaths !== null) {
-                $middleware[] = ServeStaticRsc::class;
                 $resolved = $staticPaths instanceof \Closure ? app()->call($staticPaths) : $staticPaths;
                 $route->defaults('_static_paths', $resolved);
             }
