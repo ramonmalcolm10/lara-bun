@@ -100,7 +100,7 @@ class BunServiceProvider extends ServiceProvider
             return new HtmlString('');
         }
 
-        $encodedPayload = json_encode($rscPayload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        $encodedPayload = json_encode($rscPayload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
 
         $chunkTags = '';
         foreach ($clientChunks as $chunk) {

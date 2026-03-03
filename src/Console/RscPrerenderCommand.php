@@ -2,7 +2,6 @@
 
 namespace RamonMalcolm\LaraBun\Console;
 
-use Closure;
 use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\File;
@@ -209,7 +208,7 @@ class RscPrerenderCommand extends Command
             'url' => $url,
             'component' => $component,
             'version' => $version,
-        ], JSON_THROW_ON_ERROR);
+        ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
 
         $scripts = BunServiceProvider::renderRscScripts($result['rscPayload'], $result['clientChunks']);
         $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');

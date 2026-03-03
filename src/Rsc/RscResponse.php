@@ -188,7 +188,7 @@ class RscResponse implements Responsable
                 'url' => $url,
                 'component' => $component,
                 'version' => $version,
-            ], JSON_THROW_ON_ERROR);
+            ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
 
             $tail = str_replace(
                 [$initialMarker, $scriptsMarker],
