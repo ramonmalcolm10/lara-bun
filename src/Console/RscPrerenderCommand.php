@@ -158,6 +158,16 @@ class RscPrerenderCommand extends Command
     private function resolveRscResponse(Route $route, string $url): mixed
     {
         $params = $this->extractParams($route, $url);
+
+        // Set the route on the request so PageController can access route defaults
+        $request = app('request');
+        $request->setRouteResolver(fn () => $route);
+        $route->bind($request);
+
+        foreach ($params as $key => $value) {
+            $route->setParameter($key, $value);
+        }
+
         $action = $route->getAction('uses');
 
         return app()->call($action, $params);
