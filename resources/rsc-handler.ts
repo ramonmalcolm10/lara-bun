@@ -134,6 +134,26 @@ const emptyManifest = {
   },
 };
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Set up a per-render callback client and install globalThis.php.
+ * Returns a cleanup function that only removes globalThis.php if it's
+ * still pointing to THIS render's function (prevents race conditions
+ * when a refresh/new request overwrites it while an old render cleans up).
+ */
+function installPhp(client: PhpCallbackClient): () => void {
+  const phpFn = client.call.bind(client);
+  (globalThis as any).php = phpFn;
+
+  return () => {
+    try { client.disconnect(); } catch {}
+    if ((globalThis as any).php === phpFn) {
+      delete (globalThis as any).php;
+    }
+  };
+}
+
 // ─── Stream Handler (SPA navigation) ─────────────────────────────────────────
 
 /**
@@ -148,12 +168,12 @@ export async function handleRscStream(
   callbackSocket?: string | null,
   layouts: LayoutEntry[] = []
 ): Promise<{ stream: ReadableStream; clientChunks: string[] }> {
-  let client: PhpCallbackClient | null = null;
+  let cleanup: (() => void) | null = null;
 
   if (callbackSocket) {
-    client = new PhpCallbackClient();
+    const client = new PhpCallbackClient();
     await client.connect(callbackSocket);
-    (globalThis as any).php = client.call.bind(client);
+    cleanup = installPhp(client);
   }
 
   const flightStream: ReadableStream = clientManifest
@@ -161,23 +181,22 @@ export async function handleRscStream(
     : rscModule.renderRscStream(component, props, layouts);
 
   // Wrap the stream to clean up the callback client when done
-  if (client) {
+  if (cleanup) {
+    const cleanupFn = cleanup;
     const reader = flightStream.getReader();
     const wrappedStream = new ReadableStream({
       async pull(controller) {
         const { done, value } = await reader.read();
         if (done) {
           controller.close();
-          try { client!.disconnect(); } catch {}
-          delete (globalThis as any).php;
+          cleanupFn();
         } else {
           controller.enqueue(value);
         }
       },
       cancel() {
         reader.cancel();
-        try { client!.disconnect(); } catch {}
-        delete (globalThis as any).php;
+        cleanupFn();
       },
     });
     return { stream: wrappedStream, clientChunks: browserChunks };
@@ -203,12 +222,12 @@ export async function handleRscHtmlStream(
   callbackSocket?: string | null,
   layouts: LayoutEntry[] = []
 ): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }> {
-  let client: PhpCallbackClient | null = null;
+  let cleanup: (() => void) | null = null;
 
   if (callbackSocket) {
-    client = new PhpCallbackClient();
+    const client = new PhpCallbackClient();
     await client.connect(callbackSocket);
-    (globalThis as any).php = client.call.bind(client);
+    cleanup = installPhp(client);
   }
 
   // Render Flight as a stream (progressive — Suspense boundaries emit lazily)
@@ -235,7 +254,8 @@ export async function handleRscHtmlStream(
   const htmlStream = await renderToReadableStream(reactTree);
 
   // Wrap to clean up callback client when HTML stream closes
-  if (client) {
+  if (cleanup) {
+    const cleanupFn = cleanup;
     const reader = htmlStream.getReader();
     const wrappedStream = new ReadableStream({
       async pull(controller) {
@@ -244,16 +264,14 @@ export async function handleRscHtmlStream(
           controller.close();
           // Flight payload should also be done by now
           await rscPayloadPromise.catch(() => {});
-          try { client!.disconnect(); } catch {}
-          delete (globalThis as any).php;
+          cleanupFn();
         } else {
           controller.enqueue(value);
         }
       },
       cancel() {
         reader.cancel();
-        try { client!.disconnect(); } catch {}
-        delete (globalThis as any).php;
+        cleanupFn();
       },
     });
     return { htmlStream: wrappedStream, rscPayloadPromise, clientChunks: browserChunks };
@@ -295,12 +313,12 @@ export async function handleAction(
     throw new Error(`Unknown server action: "${actionId}"`);
   }
 
-  let client: PhpCallbackClient | null = null;
+  let cleanup: (() => void) | null = null;
 
   if (callbackSocket) {
-    client = new PhpCallbackClient();
+    const client = new PhpCallbackClient();
     await client.connect(callbackSocket);
-    (globalThis as any).php = client.call.bind(client);
+    cleanup = installPhp(client);
   }
 
   try {
@@ -325,23 +343,22 @@ export async function handleAction(
     const stream = rscModule.renderActionStream(result, clientManifest ?? {});
 
     // Wrap to clean up callback client when stream closes
-    if (client) {
+    if (cleanup) {
+      const cleanupFn = cleanup;
       const reader = stream.getReader();
       const wrappedStream = new ReadableStream({
         async pull(controller) {
           const { done, value } = await reader.read();
           if (done) {
             controller.close();
-            try { client!.disconnect(); } catch {}
-            delete (globalThis as any).php;
+            cleanupFn();
           } else {
             controller.enqueue(value);
           }
         },
         cancel() {
           reader.cancel();
-          try { client!.disconnect(); } catch {}
-          delete (globalThis as any).php;
+          cleanupFn();
         },
       });
       return { stream: wrappedStream };
@@ -349,10 +366,7 @@ export async function handleAction(
 
     return { stream };
   } catch (err) {
-    if (client) {
-      try { client.disconnect(); } catch {}
-      delete (globalThis as any).php;
-    }
+    cleanup?.();
     throw err;
   }
 }
@@ -366,16 +380,25 @@ export async function handleRsc(
   layouts: LayoutEntry[] = []
 ): Promise<{ body: string; rscPayload: string; clientChunks: string[]; usedDynamicApis: boolean }> {
   // Create per-render callback client if a callback socket is provided
-  let client: PhpCallbackClient | null = null;
+  let cleanup: (() => void) | null = null;
   let usedDynamicApis = false;
 
   if (callbackSocket) {
-    client = new PhpCallbackClient();
+    const client = new PhpCallbackClient();
     await client.connect(callbackSocket);
     const originalCall = client.call.bind(client);
-    (globalThis as any).php = (...args: unknown[]) => {
+
+    const phpFn = (...args: unknown[]) => {
       usedDynamicApis = true;
       return originalCall(...args);
+    };
+    (globalThis as any).php = phpFn;
+
+    cleanup = () => {
+      try { client.disconnect(); } catch {}
+      if ((globalThis as any).php === phpFn) {
+        delete (globalThis as any).php;
+      }
     };
   }
 
@@ -465,9 +488,6 @@ export async function handleRsc(
     globalThis.Date = OriginalDate;
     crypto.randomUUID = originalRandomUUID;
     crypto.getRandomValues = originalGetRandomValues;
-    if (client) {
-      try { client.disconnect(); } catch {}
-      delete (globalThis as any).php;
-    }
+    cleanup?.();
   }
 }
