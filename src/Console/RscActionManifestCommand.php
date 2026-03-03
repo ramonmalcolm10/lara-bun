@@ -28,7 +28,7 @@ class RscActionManifestCommand extends Command
      */
     private function discoverActions(): array
     {
-        $directory = config('bun.rsc.actions_dir', app_path('RSC/Actions'));
+        $directory = config('bun.rsc.actions_dir', app_path('Rsc/Actions'));
 
         if ($directory === null || ! is_dir($directory)) {
             return [];

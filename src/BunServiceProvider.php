@@ -26,7 +26,7 @@ class BunServiceProvider extends ServiceProvider
         $this->app->singleton(CallableRegistry::class, function ($app) {
             $registry = new CallableRegistry($app);
 
-            $directory = app_path('RSC');
+            $directory = app_path('Rsc');
 
             if (is_dir($directory)) {
                 $registry->discoverFrom($directory);
