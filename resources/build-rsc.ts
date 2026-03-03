@@ -429,9 +429,11 @@ export function renderRscStream(
 }
 `;
 
-// Clean output directories to prevent stale hashed files
+// Clean output directories and stale static cache to prevent serving old chunk hashes
 rmSync(browserOutDir, { recursive: true, force: true });
 rmSync(outDir, { recursive: true, force: true });
+const staticCacheDir = join(process.cwd(), "storage/framework/rsc-static");
+rmSync(staticCacheDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
 const entryPath = join(outDir, "entry.rsc.tsx");

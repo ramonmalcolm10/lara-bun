@@ -1,6 +1,6 @@
 import { createFromReadableStream } from "react-server-dom-webpack/client.edge";
 import { renderToReadableStream } from "react-dom/server";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, watch } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { PhpCallbackClient } from "./php-callback";
 
@@ -49,10 +49,28 @@ if (existsSync(ssrManifestPath)) {
   console.error("[rsc-handler] Loaded SSR manifest");
 }
 
-if (existsSync(browserChunksPath)) {
-  browserChunks = JSON.parse(readFileSync(browserChunksPath, "utf-8"));
+function loadBrowserChunks(): string[] {
+  if (existsSync(browserChunksPath)) {
+    return JSON.parse(readFileSync(browserChunksPath, "utf-8"));
+  }
+  return [];
+}
+
+browserChunks = loadBrowserChunks();
+if (browserChunks.length > 0) {
   console.error(`[rsc-handler] Browser chunks: ${browserChunks.join(", ")}`);
 }
+
+// Watch for rebuilds so the worker picks up new chunk hashes without a restart.
+try {
+  watch(browserChunksPath, () => {
+    try {
+      browserChunks = loadBrowserChunks();
+      console.error(`[rsc-handler] Reloaded browser chunks: ${browserChunks.join(", ")}`);
+    } catch {}
+  });
+} catch {}
+
 
 // ─── Shim __webpack_require__ for SSR client component resolution ───────────
 
