@@ -692,7 +692,7 @@ const appDir = join(sourceDir, "app");
 if (existsSync(appDir)) {
   type RouteType = "static" | "ssg" | "dynamic";
   const pageGlob = new Bun.Glob("**/page.{tsx,ts,jsx,js}");
-  const routes: { url: string; type: RouteType; detail: string }[] = [];
+  const routes: { url: string; type: RouteType; detail: string; generatedPaths: string[] }[] = [];
 
   for await (const pagePath of pageGlob.scan(appDir)) {
     const dir = pagePath.replace(/\/?page\.(tsx|ts|jsx|js)$/, "");
@@ -733,6 +733,7 @@ if (existsSync(appDir)) {
     const routePhp = join(pageDir, "route.php");
     let forcedDynamic = false;
     let hasStaticPaths = false;
+    let generatedPaths: string[] = [];
 
     if (existsSync(routePhp)) {
       try {
@@ -742,6 +743,31 @@ if (existsSync(appDir)) {
         }
         if (content.includes("staticPaths")) {
           hasStaticPaths = true;
+
+          // Evaluate the route.php via PHP to extract the actual staticPaths values
+          try {
+            const phpCode = `
+              require_once '${join(process.cwd(), "vendor/autoload.php")}';
+              $config = require '${routePhp}';
+              $paths = $config->getStaticPaths();
+              if (is_callable($paths)) { $paths = $paths(); }
+              echo json_encode(array_values((array) $paths));
+            `;
+            const proc = Bun.spawn(["php", "-r", phpCode], {
+              cwd: process.cwd(),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const output = await new Response(proc.stdout).text();
+            const exitCode = await proc.exited;
+
+            if (exitCode === 0 && output.trim()) {
+              const paths = JSON.parse(output.trim()) as string[];
+              // Build full URLs from the static paths
+              const baseUrl = url.replace(/\{[^}]+\}$/, "");
+              generatedPaths = paths.map((p) => `${baseUrl}${p}`);
+            }
+          } catch {}
         }
       } catch {}
     }
@@ -758,7 +784,7 @@ if (existsSync(appDir)) {
       detail = "forceDynamic()";
     } else if (hasDynamicSegment && hasStaticPaths) {
       type = "ssg";
-      detail = "staticPaths()";
+      detail = `${generatedPaths.length} path${generatedPaths.length !== 1 ? "s" : ""}`;
     } else if (hasDynamicSegment) {
       type = "dynamic";
       detail = isCatchAll ? "catch-all" : "dynamic params";
@@ -766,7 +792,7 @@ if (existsSync(appDir)) {
       type = "static";
     }
 
-    routes.push({ url, type, detail });
+    routes.push({ url, type, detail, generatedPaths });
   }
 
   routes.sort((a, b) => a.url.localeCompare(b.url));
@@ -784,6 +810,15 @@ if (existsSync(appDir)) {
       const padded = route.url.padEnd(maxUrl + 2);
       const detail = route.detail ? ` (${route.detail})` : "";
       console.log(`${symbols[route.type]}  ${padded}${labels[route.type]}${detail}`);
+
+      // Show generated paths for SSG routes
+      if (route.type === "ssg" && route.generatedPaths.length > 0) {
+        for (let i = 0; i < route.generatedPaths.length; i++) {
+          const isLast = i === route.generatedPaths.length - 1;
+          const connector = isLast ? "└" : "├";
+          console.log(`   ${connector} ${route.generatedPaths[i]}`);
+        }
+      }
     }
 
     const staticCount = routes.filter((r) => r.type === "static").length;
