@@ -130,9 +130,11 @@ class PageRouteRegistrar
 
         $route->middleware(array_unique($middleware));
 
-        // Domain routing
-        if ($page->domain !== null) {
-            $route->domain($page->domain);
+        // Domain routing via route.php ->domain()
+        $domain = $pageConfig instanceof PageRoute ? $pageConfig->getDomain() : null;
+
+        if ($domain !== null) {
+            $route->domain($domain);
         }
 
         // Auto-name: app/docs/[slug]/page → rsc.docs.slug
@@ -174,9 +176,6 @@ class PageRouteRegistrar
 
         // Strip route groups: (marketing) → nothing
         $name = preg_replace('#\([^)]+\)/?#', '', $name);
-
-        // Strip domain prefixes: @domain.com → nothing
-        $name = preg_replace('#@[^/]+/?#', '', $name);
 
         // Convert [param] and [...param] to just param
         $name = preg_replace('/\[\.\.\.(\w+)\]/', '$1', $name);

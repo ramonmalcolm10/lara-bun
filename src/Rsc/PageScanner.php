@@ -59,18 +59,10 @@ class PageScanner
         }
 
         $componentName = 'app/'.preg_replace('/\.(tsx|ts|jsx|js)$/', '', $relativePath);
-        $domain = null;
         $segments = $relativeDir !== '' ? explode('/', $relativeDir) : [];
 
-        // Extract domain from @domain/ prefix
         $urlSegments = [];
         foreach ($segments as $segment) {
-            if (str_starts_with($segment, '@')) {
-                $domain = substr($segment, 1);
-
-                continue;
-            }
-
             // Strip route groups: (groupName) → no URL segment
             if (preg_match('/^\(.*\)$/', $segment)) {
                 continue;
@@ -90,7 +82,6 @@ class PageScanner
             urlPattern: $urlPattern,
             layouts: $layouts,
             isDynamic: $isDynamic,
-            domain: $domain,
             routeConfigPath: $routeConfigPath,
             directoryConfigPaths: $directoryConfigPaths,
         );

@@ -13,7 +13,6 @@ class PageDefinition
         public string $urlPattern,
         public array $layouts,
         public bool $isDynamic,
-        public ?string $domain,
         public ?string $routeConfigPath,
         public array $directoryConfigPaths,
     ) {}

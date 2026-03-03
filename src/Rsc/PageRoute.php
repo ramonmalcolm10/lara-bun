@@ -22,6 +22,8 @@ class PageRoute
 
     protected bool $forceDynamic = false;
 
+    protected ?string $domainValue = null;
+
     /** @var array<string, string> */
     protected array $whereConstraints = [];
 
@@ -79,6 +81,13 @@ class PageRoute
         return $this;
     }
 
+    public function domain(string $domain): static
+    {
+        $this->domainValue = $domain;
+
+        return $this;
+    }
+
     public function where(string $param, string $pattern): static
     {
         $this->whereConstraints[$param] = $pattern;
@@ -125,6 +134,11 @@ class PageRoute
     public function isDynamic(): bool
     {
         return $this->forceDynamic;
+    }
+
+    public function getDomain(): ?string
+    {
+        return $this->domainValue;
     }
 
     /**
