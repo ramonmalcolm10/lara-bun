@@ -2,6 +2,8 @@
 
 namespace RamonMalcolm\LaraBun\Rsc;
 
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -25,6 +27,10 @@ class RscActionController
 
         try {
             $first = $generator->current();
+        } catch (AuthenticationException) {
+            abort(401, 'Unauthenticated.');
+        } catch (AuthorizationException) {
+            abort(403, 'This action is unauthorized.');
         } catch (ValidationException $e) {
             return response()->json([
                 'message' => $e->getMessage(),

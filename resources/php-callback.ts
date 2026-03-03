@@ -8,7 +8,7 @@
  */
 
 import type { Socket } from "bun";
-import { ServerValidationError } from "./errors";
+import { ServerAuthenticationError, ServerAuthorizationError, ServerValidationError } from "./errors";
 
 type SocketLike = Socket<undefined>;
 
@@ -58,7 +58,11 @@ export class PhpCallbackClient {
               if (pending) {
                 self.pendingCallbacks.delete(id);
 
-                if (response.validation_errors) {
+                if (response.unauthenticated) {
+                  pending.reject(new ServerAuthenticationError(response.error));
+                } else if (response.unauthorized) {
+                  pending.reject(new ServerAuthorizationError(response.error));
+                } else if (response.validation_errors) {
                   pending.reject(new ServerValidationError(
                     response.error ?? "Validation failed",
                     response.validation_errors

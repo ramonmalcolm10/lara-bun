@@ -2,6 +2,8 @@
 
 namespace RamonMalcolm\LaraBun;
 
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Validation\ValidationException;
 use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
 use RuntimeException;
@@ -205,6 +207,8 @@ class BunBridge
                 if (in_array($mainSocket, $read, true)) {
                     $frame = $this->readFrame($mainSocket);
 
+                    $this->throwIfAuthError($frame);
+
                     if (isset($frame['error'])) {
                         throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
                     }
@@ -245,6 +249,8 @@ class BunBridge
                         }
 
                         $frame = $this->readFrame($mainSocket);
+
+                        $this->throwIfAuthError($frame);
 
                         if (isset($frame['error'])) {
                             throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
@@ -385,6 +391,8 @@ class BunBridge
                 if (in_array($mainSocket, $read, true)) {
                     $frame = $this->readFrame($mainSocket);
 
+                    $this->throwIfAuthError($frame);
+
                     if (isset($frame['error'])) {
                         throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
                     }
@@ -424,6 +432,8 @@ class BunBridge
                         }
 
                         $frame = $this->readFrame($mainSocket);
+
+                        $this->throwIfAuthError($frame);
 
                         if (isset($frame['error'])) {
                             throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
@@ -556,6 +566,7 @@ class BunBridge
                 if (in_array($mainSocket, $read, true)) {
                     $frame = $this->readFrame($mainSocket);
 
+                    $this->throwIfAuthError($frame);
                     $this->throwIfValidationError($frame);
 
                     if (isset($frame['error'])) {
@@ -597,6 +608,7 @@ class BunBridge
 
                         $frame = $this->readFrame($mainSocket);
 
+                        $this->throwIfAuthError($frame);
                         $this->throwIfValidationError($frame);
 
                         if (isset($frame['error'])) {
@@ -860,6 +872,18 @@ class BunBridge
             try {
                 $result = $registry->execute($function, $args);
                 $response = json_encode(['id' => $id, 'result' => $result], JSON_THROW_ON_ERROR);
+            } catch (AuthenticationException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'unauthenticated' => true,
+                    'error' => $e->getMessage(),
+                ], JSON_THROW_ON_ERROR);
+            } catch (AuthorizationException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'unauthorized' => true,
+                    'error' => $e->getMessage(),
+                ], JSON_THROW_ON_ERROR);
             } catch (ValidationException $e) {
                 $response = json_encode([
                     'id' => $id,
@@ -871,6 +895,23 @@ class BunBridge
             }
 
             $this->writeFrame($socket, $response);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $frame
+     *
+     * @throws AuthenticationException
+     * @throws AuthorizationException
+     */
+    private function throwIfAuthError(array $frame): void
+    {
+        if (isset($frame['unauthenticated'])) {
+            throw new AuthenticationException($frame['error'] ?? 'Unauthenticated.');
+        }
+
+        if (isset($frame['unauthorized'])) {
+            throw new AuthorizationException($frame['error'] ?? 'This action is unauthorized.');
         }
     }
 

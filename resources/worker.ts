@@ -1,6 +1,6 @@
 import { unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ServerValidationError } from "./errors";
+import { ServerAuthenticationError, ServerAuthorizationError, ServerValidationError } from "./errors";
 
 type MessageHandler = (args: Record<string, unknown>) => unknown;
 
@@ -386,7 +386,17 @@ async function handleRscActionMessage(
     writeFrame(mainSocket, '{"type":"action-end"}');
   } catch (err) {
     let errorJson: string;
-    if (err instanceof ServerValidationError) {
+    if (err instanceof ServerAuthenticationError) {
+      errorJson = JSON.stringify({
+        unauthenticated: true,
+        error: err.message,
+      });
+    } else if (err instanceof ServerAuthorizationError) {
+      errorJson = JSON.stringify({
+        unauthorized: true,
+        error: err.message,
+      });
+    } else if (err instanceof ServerValidationError) {
       errorJson = JSON.stringify({
         error: err.message,
         validation_errors: err.errors,
