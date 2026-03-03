@@ -103,7 +103,7 @@ export class PhpCallbackClient {
     this.receiveBuffer = Buffer.alloc(0);
   }
 
-  call<T = unknown>(functionName: string, args?: Record<string, unknown>): Promise<T> {
+  call<T = unknown>(functionName: string, ...args: unknown[]): Promise<T> {
     if (!this.connection) {
       return Promise.reject(new Error("PHP callback not connected. Is callbackSocket configured?"));
     }
@@ -114,7 +114,7 @@ export class PhpCallbackClient {
       type: "callback",
       id,
       function: functionName,
-      args: args ?? {},
+      args,
     });
 
     const payload = Buffer.from(json, "utf-8");

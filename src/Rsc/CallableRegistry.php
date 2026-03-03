@@ -93,20 +93,20 @@ class CallableRegistry
         $callable = $this->callables[$name];
 
         if ($callable instanceof Closure) {
-            return $callable($args);
+            return $callable(...$args);
         }
 
         if (is_string($callable)) {
             $instance = $this->resolveInstance($callable);
 
-            return $instance($args);
+            return $instance(...$args);
         }
 
         if (is_array($callable)) {
             [$class, $method] = $callable;
             $instance = $this->resolveInstance($class);
 
-            return $instance->{$method}($args);
+            return $instance->{$method}(...$args);
         }
 
         throw new RuntimeException("Invalid callable configuration for \"{$name}\"");
