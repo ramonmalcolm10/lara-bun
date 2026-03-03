@@ -45,7 +45,11 @@ const serverImportGraph = new Map<string, Set<string>>();
 
 function fileUsesPhp(filePath: string): boolean {
   try {
-    const content = readFileSync(filePath, "utf-8");
+    let content = readFileSync(filePath, "utf-8");
+    // Strip template literals and string literals to avoid matching code examples
+    content = content.replace(/`[^`]*`/gs, "");
+    content = content.replace(/"[^"]*"/g, "");
+    content = content.replace(/'[^']*'/g, "");
     // Match php( or php<...>( calls — the global callable
     return /\bphp\s*[<(]/.test(content);
   } catch {
