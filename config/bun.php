@@ -18,10 +18,6 @@ return [
         'callables' => [],
         'callables_dir' => null,
         'callback_timeout' => 5,
-        'actions' => [
-            // 'jsName' => 'CallableName.method',
-        ],
-        'actions_dir' => null,
         'static_path' => env('BUN_RSC_STATIC_PATH', storage_path('framework/rsc-static')),
     ],
 

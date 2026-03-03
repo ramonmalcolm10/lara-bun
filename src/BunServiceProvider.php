@@ -8,9 +8,11 @@ use Illuminate\Support\HtmlString;
 use Illuminate\Support\ServiceProvider;
 use RamonMalcolm\LaraBun\Console\BunServeCommand;
 use RamonMalcolm\LaraBun\Console\RscActionManifestCommand;
+use RamonMalcolm\LaraBun\Console\RscPagesCommand;
 use RamonMalcolm\LaraBun\Console\RscPrerenderCommand;
-use RamonMalcolm\LaraBun\Http\Middleware\ServeStaticRsc;
 use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
+use RamonMalcolm\LaraBun\Rsc\PageRouteRegistrar;
+use RamonMalcolm\LaraBun\Rsc\PageScanner;
 use RamonMalcolm\LaraBun\Rsc\RscActionController;
 
 class BunServiceProvider extends ServiceProvider
@@ -20,12 +22,6 @@ class BunServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/bun.php', 'bun');
 
         $this->app->singleton(BunBridge::class);
-
-        \Illuminate\Routing\Route::macro('staticPaths', function (array $paths) {
-            $this->defaults['_static_paths'] = $paths;
-
-            return $this;
-        });
 
         $this->app->singleton(CallableRegistry::class, function ($app) {
             $registry = new CallableRegistry($app);
@@ -54,11 +50,13 @@ class BunServiceProvider extends ServiceProvider
             Route::post('/_rsc/action', RscActionController::class)
                 ->middleware('web');
 
-            $this->app['router']->aliasMiddleware('rsc.static', ServeStaticRsc::class);
+            $appDir = config('bun.rsc.source_dir').'/app';
 
-            if (file_exists(base_path('routes/rsc-static.php'))) {
-                Route::middleware(ServeStaticRsc::class)
-                    ->group(base_path('routes/rsc-static.php'));
+            if (is_dir($appDir)) {
+                $scanner = new PageScanner($appDir);
+                $scanner->scan();
+                (new PageRouteRegistrar($this->app['router']))
+                    ->register($scanner->getPages());
             }
         }
 
@@ -77,6 +75,7 @@ class BunServiceProvider extends ServiceProvider
             $this->commands([
                 BunServeCommand::class,
                 RscActionManifestCommand::class,
+                RscPagesCommand::class,
                 RscPrerenderCommand::class,
             ]);
         }

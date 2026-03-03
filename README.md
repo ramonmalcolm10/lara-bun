@@ -116,6 +116,7 @@ return [
 | `rsc.callables` | — | `[]` | Explicit mapping of names to PHP callables for `php()` |
 | `rsc.callables_dir` | — | `null` | Directory to auto-discover PHP callables from |
 | `rsc.callback_timeout` | — | `5` | Timeout in seconds for callback socket operations |
+| `rsc.actions_dir` | — | `app/RSC/Actions` | Directory to auto-discover server action classes from |
 | `entry_points` | `BUN_BRIDGE_ENTRY_POINTS` | `[]` | Comma-separated paths to additional JS/TS bundles |
 
 ## Multi-Worker Support
@@ -271,42 +272,7 @@ Each exported function from these files becomes callable via `BunBridge::call()`
 
 Lara Bun can render React Server Components (RSC) to HTML via the Unix socket. Async server components run in Bun, fetch data server-side, and return fully rendered HTML with zero client JavaScript.
 
-### 1. Create server components
-
-Place your server components in `resources/js/rsc/` (configurable via `rsc.source_dir`). Each file's default export becomes a callable component, using the filename as the component name:
-
-```tsx
-// resources/js/rsc/Greeting.tsx → callable as "Greeting"
-export default async function Greeting({ name }: { name: string }) {
-  return <h1>Hello, {name}!</h1>;
-}
-```
-
-```tsx
-// resources/js/rsc/user-profile.tsx → callable as "user-profile"
-export default async function UserProfile({ id }: { id: number }) {
-  const user = await fetch(`https://api.example.com/users/${id}`).then(r => r.json());
-  return <div>{user.name}</div>;
-}
-```
-
-### 2. Build the RSC bundle
-
-The package includes a build script that auto-discovers all components in your `rsc/` directory, generates the entry file, and builds the bundle:
-
-```bash
-bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts
-```
-
-Or with custom paths:
-
-```bash
-bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts resources/js/rsc bootstrap/rsc
-```
-
-This produces `bootstrap/rsc/entry.rsc.js`. Files prefixed with `_`, or containing `.test.`/`.spec.` are excluded.
-
-### 3. Enable RSC
+### 1. Enable RSC
 
 Add to your `.env`:
 
@@ -314,16 +280,96 @@ Add to your `.env`:
 BUN_RSC_ENABLED=true
 ```
 
-### 4. Call from PHP
+### 2. Create pages with file-based routing
+
+Place your components in `resources/js/rsc/app/`. Pages and layouts are auto-discovered using Next.js App Router conventions:
+
+```
+resources/js/rsc/app/
+├── layout.tsx                    → root layout (wraps all pages)
+├── page.tsx                      → GET /
+├── about/
+│   └── page.tsx                  → GET /about
+├── docs/
+│   ├── layout.tsx                → nested layout for /docs/*
+│   ├── route.php                 → directory-level config (middleware, etc.)
+│   ├── page.tsx                  → GET /docs
+│   ├── sidebar.tsx               → colocated component (NOT a route)
+│   └── [slug]/
+│       ├── page.tsx              → GET /docs/{slug}
+│       └── route.php             → page-level config (staticPaths, viewData)
+├── blog/
+│   └── [...path]/
+│       └── page.tsx              → GET /blog/{path} (catch-all)
+├── (marketing)/                  → route group (no URL segment)
+│   ├── pricing/
+│   │   └── page.tsx              → GET /pricing
+│   └── features/
+│       └── page.tsx              → GET /features
+└── @admin.example.com/           → domain routing
+    └── page.tsx                  → GET / on admin.example.com
+```
+
+**Special files:**
+- `page.tsx` — defines a route (only files named `page.*` create routes)
+- `layout.tsx` — wraps all pages in the same directory and below
+- `route.php` — optional PHP config for middleware, auth, static paths
+
+Everything else is a colocated component importable by pages and layouts.
+
+### Route configuration (`route.php`)
+
+Use `route.php` files to add middleware, authorization, static paths, and view data:
 
 ```php
-use RamonMalcolm\LaraBun\BunBridge;
+// app/docs/route.php — applies to all routes in /docs/*
+<?php
+use RamonMalcolm\LaraBun\Rsc\PageRoute;
 
-$result = $bridge->rsc('Greeting', ['name' => 'World']);
-
-// $result['body']       → rendered HTML string
-// $result['rscPayload'] → React Flight payload for hydration
+return PageRoute::make()
+    ->middleware(['auth', 'verified']);
 ```
+
+```php
+// app/docs/[slug]/route.php — applies to this specific route
+<?php
+use RamonMalcolm\LaraBun\Rsc\PageRoute;
+
+return PageRoute::make()
+    ->middleware(['auth'])
+    ->staticPaths(fn () => Post::pluck('slug')->all())
+    ->viewData(fn (string $slug) => ['title' => "Doc: $slug"]);
+```
+
+Available methods: `middleware()`, `can()`, `staticPaths()`, `viewData()`, `name()`, `where()`.
+
+### Auto-static detection
+
+Pages **without** dynamic segments (e.g., `app/about/page.tsx`) are automatically static — the `ServeStaticRsc` middleware is applied and `rsc:prerender` picks them up with no extra config. Pages **with** `[param]` segments are dynamic by default; provide `staticPaths()` in `route.php` to make them prerenderable.
+
+### Diagnostic command
+
+```bash
+php artisan rsc:pages
+```
+
+Shows a table of all discovered routes with their URL, component, layouts, type (static/dynamic), middleware, and domain.
+
+### 3. Build the RSC bundle
+
+```bash
+bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts
+```
+
+Components inside `app/` get path-based names (e.g., `app/docs/[slug]/page`). Components outside `app/` use flat basename naming.
+
+### 4. Pre-render static pages
+
+```bash
+php artisan rsc:prerender
+```
+
+Automatically discovers all static routes and pre-renders them as HTML and Flight payloads.
 
 ### How RSC rendering works
 
@@ -435,8 +481,8 @@ Callables are resolved through the container, so constructor injection works.
 #### 3. Call from a server component
 
 ```tsx
-// resources/js/rsc/Dashboard.tsx
-export default async function Dashboard({ userId }: { userId: number }) {
+// resources/js/rsc/app/page.tsx
+export default async function Home({ userId }: { userId: number }) {
   const user = await php('UserCallable.getUser', { id: userId });
   return <div>{user.name}</div>;
 }

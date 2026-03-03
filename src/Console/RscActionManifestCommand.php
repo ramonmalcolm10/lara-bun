@@ -16,11 +16,6 @@ class RscActionManifestCommand extends Command
     {
         $actions = $this->discoverActions();
 
-        // Explicit config takes precedence over discovered actions
-        foreach (config('bun.rsc.actions', []) as $jsName => $phpCallable) {
-            $actions[$jsName] = $phpCallable;
-        }
-
         $this->line(json_encode($actions, JSON_THROW_ON_ERROR));
 
         return self::SUCCESS;
@@ -33,7 +28,7 @@ class RscActionManifestCommand extends Command
      */
     private function discoverActions(): array
     {
-        $directory = config('bun.rsc.actions_dir');
+        $directory = config('bun.rsc.actions_dir', app_path('RSC/Actions'));
 
         if ($directory === null || ! is_dir($directory)) {
             return [];

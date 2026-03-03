@@ -1,8 +1,14 @@
-import { createFromReadableStream } from "react-server-dom-webpack/client.edge";
-import { renderToReadableStream } from "react-dom/server";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
+import { createRequire } from "node:module";
 import { PhpCallbackClient } from "./php-callback";
+
+// Resolve React packages from the app's node_modules (not the package's)
+// to avoid the dual-React problem where react-dom/server sets hooks
+// on one React instance but SSR client components read from another.
+const appRequire = createRequire(join(process.cwd(), "node_modules"));
+const { createFromReadableStream } = appRequire("react-server-dom-webpack/client.node");
+const { renderToReadableStream } = appRequire("react-dom/server");
 
 interface LayoutEntry {
   component: string;

@@ -87,7 +87,7 @@ try {
     if (entries.length > 0) {
       const lines = [
         `"use server";`,
-        `// @generated — do not edit. Defined in config/bun.php → rsc.actions`,
+        `// @generated — do not edit. Auto-discovered from app/RSC/Actions/`,
         ``,
       ];
 
@@ -123,9 +123,13 @@ for await (const path of glob.scan(sourceDir)) {
   if (
     path.startsWith("entry.") ||
     path.includes(".test.") ||
-    path.includes(".spec.") ||
-    path.startsWith("_")
+    path.includes(".spec.")
   ) {
+    continue;
+  }
+
+  // Skip _ prefixed files only outside app/ (existing convention)
+  if (basename(path).startsWith("_") && !path.startsWith("app/")) {
     continue;
   }
 
@@ -150,7 +154,9 @@ for await (const path of glob.scan(sourceDir)) {
     continue;
   }
 
-  const name = basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
+  const name = path.startsWith("app/")
+    ? path.replace(/\.(tsx|ts|jsx|js)$/, "")
+    : basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
   const info: ComponentInfo = {
     name,
     importAlias: `_C${aliasIndex++}`,
