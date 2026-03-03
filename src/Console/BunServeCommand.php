@@ -466,6 +466,8 @@ class BunServeCommand extends Command
     {
         $chunksPath = base_path('bootstrap/rsc/browser-chunks.json');
 
+        clearstatcache(true, $chunksPath);
+
         return file_exists($chunksPath) ? (int) filemtime($chunksPath) : 0;
     }
 
