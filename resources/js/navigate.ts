@@ -12,6 +12,7 @@ type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 
 interface CacheEntry {
   tree: Promise<ReactNode>;
+  title: string | null;
   expiresAt: number;
 }
 
@@ -126,6 +127,9 @@ export async function navigate(
 
     if (cached && cached.expiresAt > Date.now()) {
       treePromise = cached.tree;
+      if (cached.title) {
+        document.title = cached.title;
+      }
       cache.delete(url);
     } else {
       cache.delete(url);
@@ -173,11 +177,15 @@ export function prefetch(url: string, cacheForMs?: number): void {
     return;
   }
 
-  const tree = fetchRscPayload(url).then((response) =>
-    deserializeResponse(response)
-  );
+  let cachedTitle: string | null = null;
+
+  const tree = fetchRscPayload(url).then((response) => {
+    cachedTitle = response.headers.get("X-RSC-Title");
+    return deserializeResponse(response);
+  });
 
   cache.set(url, {
+    get title() { return cachedTitle; },
     tree,
     expiresAt: Date.now() + ttl,
   });
