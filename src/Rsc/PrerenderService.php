@@ -94,10 +94,18 @@ class PrerenderService
 
         File::put("{$outputPath}/{$path}.html", $html);
         File::put("{$outputPath}/{$path}.flight", $result['rscPayload']);
-        File::put("{$outputPath}/{$path}.meta.json", json_encode([
+        $meta = [
             'clientChunks' => $result['clientChunks'],
             'version' => $version,
-        ], JSON_THROW_ON_ERROR));
+        ];
+
+        $viewData = $rscResponse->getViewData();
+
+        if (isset($viewData['title'])) {
+            $meta['title'] = $viewData['title'];
+        }
+
+        File::put("{$outputPath}/{$path}.meta.json", json_encode($meta, JSON_THROW_ON_ERROR));
 
         return ['type' => 'static', 'reason' => null];
     }
