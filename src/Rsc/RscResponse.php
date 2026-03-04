@@ -104,6 +104,10 @@ class RscResponse implements Responsable
             'X-Accel-Buffering' => 'no',
         ];
 
+        if (isset($this->viewData['title'])) {
+            $headers[Header::X_RSC_TITLE] = $this->viewData['title'];
+        }
+
         return new StreamedResponse(function () use ($generator): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();

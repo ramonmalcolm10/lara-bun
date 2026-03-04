@@ -130,6 +130,10 @@ export async function navigate(
     } else {
       cache.delete(url);
       const response = await fetchRscPayload(url, controller.signal);
+      const title = response.headers.get("X-RSC-Title");
+      if (title) {
+        document.title = title;
+      }
       treePromise = deserializeResponse(response);
     }
 
