@@ -281,7 +281,7 @@ class RscBuildCommand extends Command
     private function getBuildScript(): string
     {
         // In a consuming app, the build script is in the vendor directory
-        $vendorPath = base_path('vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts');
+        $vendorPath = base_path('vendor/larabun/lara-bun/resources/build-rsc.ts');
 
         if (file_exists($vendorPath)) {
             return $vendorPath;

@@ -1,5 +1,5 @@
 {
-    "name": "ramonmalcolm10/lara-bun",
+    "name": "larabun/lara-bun",
     "description": "A Laravel-to-Bun bridge via Unix sockets",
     "type": "library",
     "keywords": [
@@ -11,7 +11,7 @@
         "ssr",
         "inertia"
     ],
-    "homepage": "https://github.com/ramonmalcolm10/lara-bun",
+    "homepage": "https://github.com/larabun/lara-bun",
     "authors": [
         {
             "name": "Ramon Malcolm",

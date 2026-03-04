@@ -11,7 +11,7 @@ A Laravel-to-Bun bridge that lets you call JavaScript/TypeScript functions from 
 ## Installation
 
 ```bash
-composer require ramonmalcolm10/lara-bun
+composer require larabun/lara-bun
 ```
 
 The service provider and `Bun` facade are auto-discovered.
@@ -396,7 +396,7 @@ window.__rsc_navigate('/about', { preserveScroll: true });
 ### 3. Build the RSC bundle
 
 ```bash
-bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts
+bun vendor/larabun/lara-bun/resources/build-rsc.ts
 ```
 
 Components inside `app/` get path-based names (e.g., `app/docs/[slug]/page`). Components outside `app/` use flat basename naming.
@@ -404,7 +404,7 @@ Components inside `app/` get path-based names (e.g., `app/docs/[slug]/page`). Co
 During development, use `--watch` to auto-rebuild on file changes:
 
 ```bash
-bun --watch vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts
+bun --watch vendor/larabun/lara-bun/resources/build-rsc.ts
 ```
 
 Or add both scripts to your `package.json`:
@@ -412,8 +412,8 @@ Or add both scripts to your `package.json`:
 ```json
 {
   "scripts": {
-    "build:rsc": "bun vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts",
-    "dev:rsc": "bun --watch vendor/ramonmalcolm10/lara-bun/resources/build-rsc.ts"
+    "build:rsc": "bun vendor/larabun/lara-bun/resources/build-rsc.ts",
+    "dev:rsc": "bun --watch vendor/larabun/lara-bun/resources/build-rsc.ts"
   }
 }
 ```
@@ -546,7 +546,7 @@ export default async function Home({ userId }: { userId: number }) {
 The `php()` function is available as a global during RSC rendering. Add the type reference for editor support:
 
 ```tsx
-/// <reference path="../../../vendor/ramonmalcolm10/lara-bun/resources/php.d.ts" />
+/// <reference path="../../../vendor/larabun/lara-bun/resources/php.d.ts" />
 ```
 
 #### How callbacks work
