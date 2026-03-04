@@ -1,10 +1,10 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Rsc;
+namespace LaraBun\Rsc;
 
 use Illuminate\Contracts\Support\Responsable;
-use RamonMalcolm\LaraBun\BunBridge;
-use RamonMalcolm\LaraBun\BunServiceProvider;
+use LaraBun\BunBridge;
+use LaraBun\BunServiceProvider;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RscResponse implements Responsable

@@ -1,11 +1,11 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Http\Middleware;
+namespace LaraBun\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use RamonMalcolm\LaraBun\Rsc\Header;
+use LaraBun\Rsc\Header;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ServeStaticRsc

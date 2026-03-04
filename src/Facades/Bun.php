@@ -1,6 +1,6 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Facades;
+namespace LaraBun\Facades;
 
 use Illuminate\Support\Facades\Facade;
 
@@ -11,12 +11,12 @@ use Illuminate\Support\Facades\Facade;
  * @method static bool ping()
  * @method static void disconnect()
  *
- * @see \RamonMalcolm\LaraBun\BunBridge
+ * @see \LaraBun\BunBridge
  */
 class Bun extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return \RamonMalcolm\LaraBun\BunBridge::class;
+        return \LaraBun\BunBridge::class;
     }
 }

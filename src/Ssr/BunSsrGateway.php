@@ -1,10 +1,10 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Ssr;
+namespace LaraBun\Ssr;
 
 use Inertia\Ssr\Gateway;
 use Inertia\Ssr\Response;
-use RamonMalcolm\LaraBun\BunBridge;
+use LaraBun\BunBridge;
 use Throwable;
 
 class BunSsrGateway implements Gateway

@@ -1,10 +1,10 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Console;
+namespace LaraBun\Console;
 
 use Illuminate\Console\Command;
-use RamonMalcolm\LaraBun\Rsc\PageRoute;
-use RamonMalcolm\LaraBun\Rsc\PageScanner;
+use LaraBun\Rsc\PageRoute;
+use LaraBun\Rsc\PageScanner;
 
 class RscPagesCommand extends Command
 {
@@ -55,7 +55,7 @@ class RscPagesCommand extends Command
         return self::SUCCESS;
     }
 
-    private function resolveMiddleware(\RamonMalcolm\LaraBun\Rsc\PageDefinition $page): string
+    private function resolveMiddleware(\LaraBun\Rsc\PageDefinition $page): string
     {
         $middleware = ['web'];
 

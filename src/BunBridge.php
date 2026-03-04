@@ -1,11 +1,11 @@
 <?php
 
-namespace RamonMalcolm\LaraBun;
+namespace LaraBun;
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Validation\ValidationException;
-use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
+use LaraBun\Rsc\CallableRegistry;
 use RuntimeException;
 use Socket;
 

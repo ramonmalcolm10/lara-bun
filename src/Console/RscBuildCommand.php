@@ -1,11 +1,11 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Console;
+namespace LaraBun\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\File;
-use RamonMalcolm\LaraBun\Rsc\PrerenderService;
+use LaraBun\Rsc\PrerenderService;
 use Symfony\Component\Process\Process;
 
 class RscBuildCommand extends Command

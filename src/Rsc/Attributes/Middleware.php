@@ -1,6 +1,6 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Rsc\Attributes;
+namespace LaraBun\Rsc\Attributes;
 
 use Attribute;
 

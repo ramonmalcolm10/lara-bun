@@ -1,13 +1,13 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Rsc;
+namespace LaraBun\Rsc;
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
-use RamonMalcolm\LaraBun\BunBridge;
+use LaraBun\BunBridge;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RscActionController

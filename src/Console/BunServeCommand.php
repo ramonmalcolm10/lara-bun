@@ -1,6 +1,6 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Console;
+namespace LaraBun\Console;
 
 use Illuminate\Console\Command;
 

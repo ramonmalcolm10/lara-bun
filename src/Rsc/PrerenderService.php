@@ -1,12 +1,12 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Rsc;
+namespace LaraBun\Rsc;
 
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
-use RamonMalcolm\LaraBun\BunBridge;
-use RamonMalcolm\LaraBun\BunServiceProvider;
+use LaraBun\BunBridge;
+use LaraBun\BunServiceProvider;
 use Symfony\Component\Process\Process;
 
 class PrerenderService

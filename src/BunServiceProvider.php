@@ -1,19 +1,19 @@
 <?php
 
-namespace RamonMalcolm\LaraBun;
+namespace LaraBun;
 
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\HtmlString;
 use Illuminate\Support\ServiceProvider;
-use RamonMalcolm\LaraBun\Console\BunServeCommand;
-use RamonMalcolm\LaraBun\Console\RscActionManifestCommand;
-use RamonMalcolm\LaraBun\Console\RscBuildCommand;
-use RamonMalcolm\LaraBun\Console\RscPagesCommand;
-use RamonMalcolm\LaraBun\Rsc\CallableRegistry;
-use RamonMalcolm\LaraBun\Rsc\PageRouteRegistrar;
-use RamonMalcolm\LaraBun\Rsc\PageScanner;
-use RamonMalcolm\LaraBun\Rsc\RscActionController;
+use LaraBun\Console\BunServeCommand;
+use LaraBun\Console\RscActionManifestCommand;
+use LaraBun\Console\RscBuildCommand;
+use LaraBun\Console\RscPagesCommand;
+use LaraBun\Rsc\CallableRegistry;
+use LaraBun\Rsc\PageRouteRegistrar;
+use LaraBun\Rsc\PageScanner;
+use LaraBun\Rsc\RscActionController;
 
 class BunServiceProvider extends ServiceProvider
 {
@@ -86,7 +86,7 @@ class BunServiceProvider extends ServiceProvider
     private function registerBladeDirectives(): void
     {
         Blade::directive('rscScripts', function (string $expression) {
-            return "<?php echo \RamonMalcolm\LaraBun\BunServiceProvider::renderRscScripts({$expression}); ?>";
+            return "<?php echo \LaraBun\BunServiceProvider::renderRscScripts({$expression}); ?>";
         });
     }
 

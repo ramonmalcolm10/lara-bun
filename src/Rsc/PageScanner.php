@@ -1,6 +1,6 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Rsc;
+namespace LaraBun\Rsc;
 
 use Illuminate\Support\Str;
 use RecursiveDirectoryIterator;

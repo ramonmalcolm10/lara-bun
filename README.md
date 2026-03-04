@@ -50,7 +50,7 @@ This starts a Bun process that listens on a Unix socket, auto-discovers all `.ts
 ### Via dependency injection
 
 ```php
-use RamonMalcolm\LaraBun\BunBridge;
+use LaraBun\BunBridge;
 
 class MyController extends Controller
 {
@@ -66,7 +66,7 @@ class MyController extends Controller
 ### Via the Bun facade
 
 ```php
-use RamonMalcolm\LaraBun\Facades\Bun;
+use LaraBun\Facades\Bun;
 
 $greeting = Bun::call('greet', ['name' => 'World']);
 
@@ -330,7 +330,7 @@ Use `route.php` files to add middleware, authorization, static paths, and view d
 ```php
 // app/docs/route.php — applies to all routes in /docs/*
 <?php
-use RamonMalcolm\LaraBun\Rsc\PageRoute;
+use LaraBun\Rsc\PageRoute;
 
 return PageRoute::make()
     ->middleware(['auth', 'verified']);
@@ -339,7 +339,7 @@ return PageRoute::make()
 ```php
 // app/docs/[slug]/route.php — applies to this specific route
 <?php
-use RamonMalcolm\LaraBun\Rsc\PageRoute;
+use LaraBun\Rsc\PageRoute;
 
 return PageRoute::make()
     ->middleware(['auth'])
@@ -589,7 +589,7 @@ If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/o
 ```php
 'warm' => [
     ...Octane::defaultServicesToWarm(),
-    \RamonMalcolm\LaraBun\BunBridge::class,
+    \LaraBun\BunBridge::class,
 ],
 ```
 

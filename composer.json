@@ -29,7 +29,7 @@
     },
     "autoload": {
         "psr-4": {
-            "RamonMalcolm\\LaraBun\\": "src/"
+            "LaraBun\\": "src/"
         },
         "files": [
             "src/helpers.php"
@@ -38,10 +38,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "RamonMalcolm\\LaraBun\\BunServiceProvider"
+                "LaraBun\\BunServiceProvider"
             ],
             "aliases": {
-                "Bun": "RamonMalcolm\\LaraBun\\Facades\\Bun"
+                "Bun": "LaraBun\\Facades\\Bun"
             }
         }
     },

@@ -1,6 +1,6 @@
 <?php
 
-namespace RamonMalcolm\LaraBun\Rsc;
+namespace LaraBun\Rsc;
 
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -9,9 +9,9 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Pipeline\Pipeline;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
-use RamonMalcolm\LaraBun\Rsc\Attributes\Authenticated;
-use RamonMalcolm\LaraBun\Rsc\Attributes\Can;
-use RamonMalcolm\LaraBun\Rsc\Attributes\Middleware;
+use LaraBun\Rsc\Attributes\Authenticated;
+use LaraBun\Rsc\Attributes\Can;
+use LaraBun\Rsc\Attributes\Middleware;
 use ReflectionClass;
 use ReflectionMethod;
 use RuntimeException;
