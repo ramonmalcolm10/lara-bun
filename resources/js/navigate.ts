@@ -105,10 +105,24 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
   });
 }
 
+function isExternalUrl(url: string): boolean {
+  try {
+    return new URL(url, window.location.origin).origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
 export async function navigate(
   url: string,
   opts?: { replace?: boolean; preserveScroll?: boolean }
 ): Promise<void> {
+  // External URLs can't be fetched (CORS) — go directly to full page navigation
+  if (isExternalUrl(url)) {
+    window.location.href = url;
+    return;
+  }
+
   // Abort any in-flight navigation
   activeController?.abort();
 
@@ -177,6 +191,8 @@ export async function navigate(
 }
 
 export function prefetch(url: string, cacheForMs?: number): void {
+  if (isExternalUrl(url)) return;
+
   const ttl = cacheForMs ?? DEFAULT_PREFETCH_TTL;
   const existing = cache.get(url);
 
