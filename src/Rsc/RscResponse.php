@@ -105,7 +105,7 @@ class RscResponse implements Responsable
         ];
 
         if (isset($this->viewData['title'])) {
-            $headers[Header::X_RSC_TITLE] = $this->viewData['title'];
+            $headers[Header::X_RSC_TITLE] = rawurlencode($this->viewData['title']);
         }
 
         return new StreamedResponse(function () use ($generator): void {

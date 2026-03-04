@@ -134,9 +134,9 @@ export async function navigate(
     } else {
       cache.delete(url);
       const response = await fetchRscPayload(url, controller.signal);
-      const title = response.headers.get("X-RSC-Title");
-      if (title) {
-        document.title = title;
+      const rawTitle = response.headers.get("X-RSC-Title");
+      if (rawTitle) {
+        document.title = decodeURIComponent(rawTitle);
       }
       treePromise = deserializeResponse(response);
     }
@@ -180,7 +180,8 @@ export function prefetch(url: string, cacheForMs?: number): void {
   let cachedTitle: string | null = null;
 
   const tree = fetchRscPayload(url).then((response) => {
-    cachedTitle = response.headers.get("X-RSC-Title");
+    const rawTitle = response.headers.get("X-RSC-Title");
+    cachedTitle = rawTitle ? decodeURIComponent(rawTitle) : null;
     return deserializeResponse(response);
   });
 

@@ -30,7 +30,7 @@ class ServeStaticRsc
                 ];
 
                 if (isset($meta['title'])) {
-                    $headers[Header::X_RSC_TITLE] = $meta['title'];
+                    $headers[Header::X_RSC_TITLE] = rawurlencode($meta['title']);
                 }
 
                 return new Response(file_get_contents($flightFile), 200, $headers);
