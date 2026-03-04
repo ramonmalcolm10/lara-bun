@@ -3,6 +3,7 @@
 namespace LaraBun\Console;
 
 use Illuminate\Console\Command;
+use LaraBun\BunBridge;
 
 class BunServeCommand extends Command
 {
@@ -404,7 +405,43 @@ class BunServeCommand extends Command
 
         $this->line("Worker: {$workerPath}");
         $this->line("Using: {$bunPath}");
+
+        $this->warnIfPostMaxSizeTooLow();
+
         $this->line('Press Ctrl+C to stop');
+    }
+
+    private function warnIfPostMaxSizeTooLow(): void
+    {
+        $bodySizeLimit = BunBridge::parseSize(config('bun.rsc.body_size_limit', '1mb'));
+        $postMaxSize = self::phpIniBytes('post_max_size');
+
+        if ($postMaxSize > 0 && $postMaxSize < $bodySizeLimit) {
+            $this->warn(
+                "PHP's post_max_size (".ini_get('post_max_size').") is lower than body_size_limit ("
+                .config('bun.rsc.body_size_limit', '25mb').'). '
+                .'PHP will silently reject server action payloads above '.ini_get('post_max_size').'.'
+            );
+        }
+    }
+
+    private static function phpIniBytes(string $key): int
+    {
+        $value = ini_get($key);
+
+        if ($value === false || $value === '') {
+            return 0;
+        }
+
+        $unit = strtolower(substr($value, -1));
+        $bytes = (int) $value;
+
+        return match ($unit) {
+            'g' => $bytes * 1024 * 1024 * 1024,
+            'm' => $bytes * 1024 * 1024,
+            'k' => $bytes * 1024,
+            default => $bytes,
+        };
     }
 
     /**
@@ -436,6 +473,10 @@ class BunServeCommand extends Command
         if ($packageDir !== false) {
             $env['LARA_BUN_PACKAGE_DIR'] = $packageDir;
         }
+
+        $env['BUN_MAX_FRAME_SIZE'] = (string) BunBridge::parseSize(
+            config('bun.rsc.body_size_limit', '1mb')
+        );
 
         return $env;
     }

@@ -459,6 +459,8 @@ function writeFrame(socket: SocketLike, json: string): void {
   }
 }
 
+const MAX_FRAME_SIZE = parseInt(process.env.BUN_MAX_FRAME_SIZE || "1048576", 10); // 1MB default
+
 const server = Bun.listen({
   unix: socketPath,
   socket: {
@@ -469,7 +471,7 @@ const server = Bun.listen({
       while (buf.length >= 4) {
         const frameLength = buf.readUInt32BE(0);
 
-        if (frameLength <= 0 || frameLength > 10 * 1024 * 1024) {
+        if (frameLength <= 0 || frameLength > MAX_FRAME_SIZE) {
           log("Invalid frame length:", frameLength);
           socketBuffers.delete(socket);
           return;

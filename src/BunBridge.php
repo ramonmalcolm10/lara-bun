@@ -25,6 +25,8 @@ class BunBridge
 
     private int $currentWorker;
 
+    private int $maxFrameSize;
+
     public function __construct()
     {
         if (! extension_loaded('sockets')) {
@@ -34,6 +36,7 @@ class BunBridge
         $basePath = config('bun.socket_path', '/tmp/bun-bridge.sock');
         $this->workerCount = max(1, (int) config('bun.workers', 1));
         $this->currentWorker = $this->workerCount > 1 ? random_int(0, $this->workerCount - 1) : 0;
+        $this->maxFrameSize = self::parseSize(config('bun.rsc.body_size_limit', '1mb'));
 
         if ($this->workerCount === 1) {
             $this->socketPaths = [$basePath];
@@ -697,6 +700,30 @@ class BunBridge
     }
 
     /**
+     * Parse a human-readable size string (e.g. '25mb', '512kb') into bytes.
+     *
+     * Falls back to 1MB if the value is invalid.
+     */
+    public static function parseSize(string $size): int
+    {
+        $size = trim($size);
+
+        if (preg_match('/^(\d+(?:\.\d+)?)\s*(kb|mb|gb|b)?$/i', $size, $matches)) {
+            $value = (float) $matches[1];
+            $unit = strtolower($matches[2] ?? 'b');
+
+            return (int) match ($unit) {
+                'kb' => $value * 1024,
+                'mb' => $value * 1024 * 1024,
+                'gb' => $value * 1024 * 1024 * 1024,
+                default => $value,
+            };
+        }
+
+        return 1024 * 1024;
+    }
+
+    /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
@@ -846,7 +873,7 @@ class BunBridge
         while (strlen($buffer) >= 4) {
             $frameLength = unpack('N', substr($buffer, 0, 4))[1];
 
-            if ($frameLength <= 0 || $frameLength > 10 * 1024 * 1024) {
+            if ($frameLength <= 0 || $frameLength > $this->maxFrameSize) {
                 $buffer = '';
 
                 return;
@@ -967,7 +994,7 @@ class BunBridge
 
         $length = unpack('N', $header)[1];
 
-        if ($length <= 0 || $length > 10 * 1024 * 1024) {
+        if ($length <= 0 || $length > $this->maxFrameSize) {
             throw new RuntimeException('Invalid frame length from socket');
         }
 

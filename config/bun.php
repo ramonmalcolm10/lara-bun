@@ -17,6 +17,7 @@ return [
         'root_view' => env('BUN_RSC_ROOT_VIEW', 'lara-bun::rsc-app'),
         'callback_timeout' => 5,
         'static_path' => env('BUN_RSC_STATIC_PATH', storage_path('framework/rsc-static')),
+        'body_size_limit' => env('BUN_RSC_BODY_SIZE_LIMIT', '1mb'),
     ],
 
     'entry_points' => array_filter(
