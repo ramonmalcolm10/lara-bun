@@ -6,6 +6,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Validation\ValidationException;
 use LaraBun\Rsc\CallableRegistry;
+use LaraBun\Rsc\RscRedirectException;
 use RuntimeException;
 use Socket;
 
@@ -569,6 +570,10 @@ class BunBridge
                 if (in_array($mainSocket, $read, true)) {
                     $frame = $this->readFrame($mainSocket);
 
+                    if (isset($frame['redirect'])) {
+                        throw new RscRedirectException($frame['redirect']);
+                    }
+
                     $this->throwIfAuthError($frame);
                     $this->throwIfValidationError($frame);
 
@@ -610,6 +615,10 @@ class BunBridge
                         }
 
                         $frame = $this->readFrame($mainSocket);
+
+                        if (isset($frame['redirect'])) {
+                            throw new RscRedirectException($frame['redirect']);
+                        }
 
                         $this->throwIfAuthError($frame);
                         $this->throwIfValidationError($frame);
@@ -916,6 +925,11 @@ class BunBridge
                     'id' => $id,
                     'validation_errors' => $e->errors(),
                     'error' => $e->getMessage(),
+                ], JSON_THROW_ON_ERROR);
+            } catch (RscRedirectException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'redirect' => $e->getLocation(),
                 ], JSON_THROW_ON_ERROR);
             } catch (\Throwable $e) {
                 $response = json_encode(['id' => $id, 'error' => $e->getMessage()], JSON_THROW_ON_ERROR);

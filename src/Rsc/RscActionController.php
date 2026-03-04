@@ -6,13 +6,14 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
 use LaraBun\BunBridge;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RscActionController
 {
-    public function __invoke(Request $request): StreamedResponse|JsonResponse
+    public function __invoke(Request $request): StreamedResponse|JsonResponse|Response
     {
         $actionId = $request->header(Header::X_RSC_ACTION);
 
@@ -28,9 +29,15 @@ class RscActionController
         try {
             $first = $generator->current();
         } catch (AuthenticationException) {
-            abort(401, 'Unauthenticated.');
-        } catch (AuthorizationException) {
-            abort(403, 'This action is unauthorized.');
+            return response('', 401)
+                ->header('X-RSC-Redirect', route('login'));
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'message' => $e->getMessage() ?: 'This action is unauthorized.',
+            ], 403);
+        } catch (RscRedirectException $e) {
+            return response('', $e->getStatus())
+                ->header('X-RSC-Redirect', $e->getLocation());
         } catch (ValidationException $e) {
             return response()->json([
                 'message' => $e->getMessage(),

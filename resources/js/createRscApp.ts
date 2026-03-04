@@ -21,7 +21,7 @@ import {
   navigate,
   prefetch,
 } from "./navigate";
-import { ServerValidationError } from "./errors";
+import { ServerValidationError, ServerAuthorizationError } from "./errors";
 
 declare global {
   interface Window {
@@ -79,7 +79,18 @@ export function createRscApp(
       body: rawBody,
     });
 
+    // Unified redirect — covers 401 (auth) and intentional redirects
+    const redirect = response.headers.get("X-RSC-Redirect");
+    if (redirect) {
+      window.__rsc_navigate(redirect);
+      return;
+    }
+
     if (!response.ok) {
+      if (response.status === 403) {
+        const body = await response.json();
+        throw new ServerAuthorizationError(body.message ?? "This action is unauthorized.");
+      }
       if (response.status === 422) {
         const body = await response.json();
         throw new ServerValidationError(

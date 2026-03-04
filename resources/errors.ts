@@ -21,3 +21,13 @@ export class ServerAuthorizationError extends Error {
     this.name = "ServerAuthorizationError";
   }
 }
+
+export class ServerRedirectError extends Error {
+  public readonly location: string;
+
+  constructor(location: string) {
+    super(`Redirect to ${location}`);
+    this.name = "ServerRedirectError";
+    this.location = location;
+  }
+}

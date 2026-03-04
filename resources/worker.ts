@@ -1,6 +1,6 @@
 import { unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ServerAuthenticationError, ServerAuthorizationError, ServerValidationError } from "./errors";
+import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors";
 
 type MessageHandler = (args: Record<string, unknown>) => unknown;
 
@@ -395,6 +395,10 @@ async function handleRscActionMessage(
       errorJson = JSON.stringify({
         unauthorized: true,
         error: err.message,
+      });
+    } else if (err instanceof ServerRedirectError) {
+      errorJson = JSON.stringify({
+        redirect: err.location,
       });
     } else if (err instanceof ServerValidationError) {
       errorJson = JSON.stringify({

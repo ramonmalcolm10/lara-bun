@@ -134,6 +134,13 @@ export async function navigate(
     } else {
       cache.delete(url);
       const response = await fetchRscPayload(url, controller.signal);
+
+      const contentType = response.headers.get("Content-Type") ?? "";
+      if (!contentType.includes("text/x-component")) {
+        window.location.href = url;
+        return;
+      }
+
       const rawTitle = response.headers.get("X-RSC-Title");
       if (rawTitle) {
         document.title = decodeURIComponent(rawTitle);
