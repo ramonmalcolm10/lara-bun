@@ -24,6 +24,13 @@
         "illuminate/support": "^11.0|^12.0|^13.0",
         "illuminate/console": "^11.0|^12.0|^13.0"
     },
+    "require-dev": {
+        "orchestra/testbench": "^10.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0",
+        "mockery/mockery": "^1.6",
+        "inertiajs/inertia-laravel": "^2.0"
+    },
     "suggest": {
         "inertiajs/inertia-laravel": "Required for Bun SSR gateway"
     },
@@ -35,6 +42,14 @@
             "src/helpers.php"
         ]
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest"
+    },
     "extra": {
         "laravel": {
             "providers": [
@@ -43,6 +58,11 @@
             "aliases": {
                 "Bun": "LaraBun\\Facades\\Bun"
             }
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
         }
     },
     "minimum-stability": "stable",
