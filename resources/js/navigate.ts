@@ -41,6 +41,10 @@ export function setCallServer(fn: CallServerFn): void {
   callServerFn = fn;
 }
 
+export function renderTree(tree: ReactNode): void {
+  onNavigate?.(tree);
+}
+
 export function getCallServer(): CallServerFn {
   if (!callServerFn) {
     throw new Error("callServer not initialized. Ensure createRscApp() has been called.");
@@ -60,13 +64,6 @@ function fetchRscPayload(url: string, signal?: AbortSignal): Promise<Response> {
       const location = response.headers.get("X-RSC-Location");
       window.location.href = location ?? url;
       throw new Error("Version mismatch — full reload triggered");
-    }
-
-    if (!response.ok) {
-      // Server returned an error — fall back to full page navigation
-      // instead of trying to parse HTML as Flight payload
-      window.location.href = url;
-      throw new Error(`RSC navigation failed: ${response.status}`);
     }
 
     return response;

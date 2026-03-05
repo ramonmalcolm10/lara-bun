@@ -47,7 +47,7 @@ test('returns 401 with X-RSC-Redirect to login on AuthenticationException', func
         ->assertHeader('X-RSC-Redirect', route('login'));
 });
 
-test('returns 403 JSON with message on AuthorizationException', function () {
+test('propagates AuthorizationException to exception handler with 403 status', function () {
     $this->bridgeMock
         ->shouldReceive('rscAction')
         ->once()
@@ -60,13 +60,10 @@ test('returns 403 JSON with message on AuthorizationException', function () {
 
     $response = postAction($this);
 
-    $response->assertStatus(403)
-        ->assertJson([
-            'message' => 'You cannot do this.',
-        ]);
+    $response->assertStatus(403);
 });
 
-test('returns 403 with default message when AuthorizationException has no message', function () {
+test('propagates AuthorizationException with default message to exception handler', function () {
     $this->bridgeMock
         ->shouldReceive('rscAction')
         ->once()
@@ -79,10 +76,7 @@ test('returns 403 with default message when AuthorizationException has no messag
 
     $response = postAction($this);
 
-    $response->assertStatus(403)
-        ->assertJson([
-            'message' => 'This action is unauthorized.',
-        ]);
+    $response->assertStatus(403);
 });
 
 test('returns redirect with X-RSC-Redirect on RscRedirectException', function () {

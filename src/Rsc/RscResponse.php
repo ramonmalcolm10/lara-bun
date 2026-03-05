@@ -16,6 +16,8 @@ class RscResponse implements Responsable
 
     protected ?string $version = null;
 
+    protected int $statusCode = 200;
+
     /** @var list<array{component: string, props: array<string, mixed>}> */
     protected array $layouts = [];
 
@@ -69,6 +71,18 @@ class RscResponse implements Responsable
         return $this;
     }
 
+    public function status(int $status): static
+    {
+        $this->statusCode = $status;
+
+        return $this;
+    }
+
+    public function getStatusCode(): int
+    {
+        return $this->statusCode;
+    }
+
     /**
      * @param  \Illuminate\Http\Request  $request
      */
@@ -76,7 +90,7 @@ class RscResponse implements Responsable
     {
         $version = $this->version ?? $this->resolveVersion();
 
-        if ($request->hasHeader(Header::X_RSC)) {
+        if ($request->hasHeader(Header::X_RSC) || $request->hasHeader(Header::X_RSC_ACTION)) {
             return $this->toStreamedRscResponse($version);
         }
 
@@ -120,7 +134,7 @@ class RscResponse implements Responsable
                 flush();
                 $generator->next();
             }
-        }, 200, $headers);
+        }, $this->statusCode, $headers);
     }
 
     /**
@@ -202,7 +216,7 @@ class RscResponse implements Responsable
 
             echo $tail;
             flush();
-        }, 200, [
+        }, $this->statusCode, [
             'Content-Type' => 'text/html; charset=utf-8',
             'X-Accel-Buffering' => 'no',
         ]);

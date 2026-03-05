@@ -2,7 +2,6 @@
 
 namespace LaraBun\Rsc;
 
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,10 +30,6 @@ class RscActionController
         } catch (AuthenticationException) {
             return response('', 401)
                 ->header('X-RSC-Redirect', route('login'));
-        } catch (AuthorizationException $e) {
-            return response()->json([
-                'message' => $e->getMessage() ?: 'This action is unauthorized.',
-            ], 403);
         } catch (RscRedirectException $e) {
             return response('', $e->getStatus())
                 ->header('X-RSC-Redirect', $e->getLocation());

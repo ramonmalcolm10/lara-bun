@@ -103,3 +103,24 @@ test('withViewData overwrites existing key', function () {
 
     expect($response->getViewData())->toBe(['title' => 'Second']);
 });
+
+test('status sets and returns the status code', function () {
+    $response = new RscResponse('Page');
+    $response->status(404);
+
+    expect($response->getStatusCode())->toBe(404);
+});
+
+test('default status is 200', function () {
+    $response = new RscResponse('Page');
+
+    expect($response->getStatusCode())->toBe(200);
+});
+
+test('status is chainable', function () {
+    $response = new RscResponse('Page');
+
+    $result = $response->status(500);
+
+    expect($result)->toBe($response);
+});

@@ -5,7 +5,7 @@
  * are built in a separate build graph and cannot directly import navigate.ts.
  */
 
-export { ServerValidationError, ServerAuthorizationError, ServerAuthenticationError, ServerSessionExpiredError } from "./errors";
+export { ServerValidationError, ServerAuthenticationError, ServerSessionExpiredError } from "./errors";
 
 export function visit(
   url: string,

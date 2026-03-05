@@ -15,13 +15,6 @@ export class ServerAuthenticationError extends Error {
   }
 }
 
-export class ServerAuthorizationError extends Error {
-  constructor(message: string = "This action is unauthorized.") {
-    super(message);
-    this.name = "ServerAuthorizationError";
-  }
-}
-
 export class ServerSessionExpiredError extends Error {
   constructor(message: string = "Your session has expired. Please refresh the page.") {
     super(message);

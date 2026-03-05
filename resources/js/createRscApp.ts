@@ -18,10 +18,11 @@ import {
   setNavigateHandler,
   setDeserializer,
   setCallServer,
+  renderTree,
   navigate,
   prefetch,
 } from "./navigate";
-import { ServerValidationError, ServerAuthorizationError, ServerSessionExpiredError } from "./errors";
+import { ServerValidationError, ServerSessionExpiredError } from "./errors";
 
 declare global {
   interface Window {
@@ -87,12 +88,15 @@ export function createRscApp(
     }
 
     if (!response.ok) {
+      const contentType = response.headers.get("Content-Type") ?? "";
+      if (contentType.includes("text/x-component")) {
+        const tree = await createFromReadableStream(response.body!, { callServer });
+        renderTree(tree);
+        return;
+      }
+
       if (response.status === 419) {
         throw new ServerSessionExpiredError();
-      }
-      if (response.status === 403) {
-        const body = await response.json();
-        throw new ServerAuthorizationError(body.message ?? "This action is unauthorized.");
       }
       if (response.status === 422) {
         const body = await response.json();
