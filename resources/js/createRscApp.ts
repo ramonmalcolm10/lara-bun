@@ -21,7 +21,7 @@ import {
   navigate,
   prefetch,
 } from "./navigate";
-import { ServerValidationError, ServerAuthorizationError } from "./errors";
+import { ServerValidationError, ServerAuthorizationError, ServerSessionExpiredError } from "./errors";
 
 declare global {
   interface Window {
@@ -87,6 +87,9 @@ export function createRscApp(
     }
 
     if (!response.ok) {
+      if (response.status === 419) {
+        throw new ServerSessionExpiredError();
+      }
       if (response.status === 403) {
         const body = await response.json();
         throw new ServerAuthorizationError(body.message ?? "This action is unauthorized.");

@@ -21,3 +21,10 @@ export class ServerAuthorizationError extends Error {
     this.name = "ServerAuthorizationError";
   }
 }
+
+export class ServerSessionExpiredError extends Error {
+  constructor(message: string = "Your session has expired. Please refresh the page.") {
+    super(message);
+    this.name = "ServerSessionExpiredError";
+  }
+}
