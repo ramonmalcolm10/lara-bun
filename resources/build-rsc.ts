@@ -6,7 +6,7 @@
  *   bun <this-script> [source-dir] [out-dir]
  *
  * Defaults:
- *   source-dir: resources/js
+ *   source-dir: resources/js/rsc
  *   out-dir:    bootstrap/rsc
  */
 
@@ -14,7 +14,7 @@ import { join, basename, resolve } from "node:path";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import type { BunPlugin } from "bun";
 
-const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js");
+const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js/rsc");
 const outDir = process.argv[3] ?? join(process.cwd(), "bootstrap/rsc");
 const clientOutDir = join(outDir, "client");
 const browserOutDir = join(process.cwd(), "public/build/rsc");
