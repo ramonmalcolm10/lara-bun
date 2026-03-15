@@ -32,10 +32,26 @@ class RscRouteManifestCommand extends Command
                 'urlPattern' => $page->urlPattern === '/' ? '/' : '/'.$page->urlPattern,
             ];
 
+            $domain = null;
+
+            // Check directory-level configs for domain (innermost wins)
+            foreach ($page->directoryConfigPaths as $configPath) {
+                $dirConfig = require $configPath;
+
+                if ($dirConfig instanceof PageRoute && $dirConfig->getDomain() !== null) {
+                    $domain = $dirConfig->getDomain();
+                }
+            }
+
             if ($page->routeConfigPath !== null) {
                 $config = require $page->routeConfigPath;
 
                 if ($config instanceof PageRoute) {
+                    // Page-level domain overrides directory-level
+                    if ($config->getDomain() !== null) {
+                        $domain = $config->getDomain();
+                    }
+
                     $staticPaths = $config->getStaticPaths();
 
                     if (is_array($staticPaths)) {
@@ -48,6 +64,10 @@ class RscRouteManifestCommand extends Command
                         $entry['where'] = $this->extractWhereValues($where);
                     }
                 }
+            }
+
+            if ($domain !== null) {
+                $entry['domain'] = $domain;
             }
 
             $routes[] = $entry;
