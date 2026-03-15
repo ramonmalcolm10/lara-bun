@@ -823,7 +823,7 @@ for (const c of clientComponents) {
   clientManifest[c.relativePath] = {
     id: c.relativePath,
     chunks: [],
-    name: "default",
+    name: "*",
   };
 }
 
@@ -842,6 +842,11 @@ const ssrModuleMap: Record<
 
 for (const c of clientComponents) {
   ssrModuleMap[c.relativePath] = {
+    "*": {
+      id: c.relativePath,
+      chunks: [],
+      name: "*",
+    },
     "default": {
       id: c.relativePath,
       chunks: [],
