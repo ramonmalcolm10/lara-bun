@@ -10,9 +10,16 @@ type ReactNode = unknown;
 type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
 type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 
+interface PageMeta {
+  title?: string;
+  description?: string;
+  [key: string]: string | undefined;
+}
+
 interface CacheEntry {
   tree: Promise<ReactNode>;
   title: string | null;
+  meta: PageMeta | null;
   expiresAt: number;
 }
 
@@ -24,6 +31,45 @@ let activeController: AbortController | null = null;
 const cache = new Map<string, CacheEntry>();
 
 const DEFAULT_PREFETCH_TTL = 30_000;
+
+function applyMeta(meta: PageMeta): void {
+  if (meta.title) {
+    document.title = meta.title;
+  }
+
+  for (const [key, value] of Object.entries(meta)) {
+    if (key === "title" || !value) continue;
+
+    const isOg = key.startsWith("og:");
+    const selector = isOg
+      ? `meta[property="${key}"]`
+      : `meta[name="${key}"]`;
+
+    let el = document.head.querySelector(selector);
+
+    if (!el) {
+      el = document.createElement("meta");
+      if (isOg) {
+        el.setAttribute("property", key);
+      } else {
+        el.setAttribute("name", key);
+      }
+      document.head.appendChild(el);
+    }
+
+    el.setAttribute("content", value);
+  }
+}
+
+function parseMetaHeader(response: Response): PageMeta | null {
+  const raw = response.headers.get("X-RSC-Meta");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as PageMeta;
+  } catch {
+    return null;
+  }
+}
 
 export function setVersion(v: string): void {
   version = v;
@@ -138,7 +184,9 @@ export async function navigate(
 
     if (cached && cached.expiresAt > Date.now()) {
       treePromise = cached.tree;
-      if (cached.title) {
+      if (cached.meta) {
+        applyMeta(cached.meta);
+      } else if (cached.title) {
         document.title = cached.title;
       }
       cache.delete(url);
@@ -152,9 +200,14 @@ export async function navigate(
         return;
       }
 
-      const rawTitle = response.headers.get("X-RSC-Title");
-      if (rawTitle) {
-        document.title = decodeURIComponent(rawTitle);
+      const meta = parseMetaHeader(response);
+      if (meta) {
+        applyMeta(meta);
+      } else {
+        const rawTitle = response.headers.get("X-RSC-Title");
+        if (rawTitle) {
+          document.title = decodeURIComponent(rawTitle);
+        }
       }
       treePromise = deserializeResponse(response);
     }
@@ -198,15 +251,20 @@ export function prefetch(url: string, cacheForMs?: number): void {
   }
 
   let cachedTitle: string | null = null;
+  let cachedMeta: PageMeta | null = null;
 
   const tree = fetchRscPayload(url).then((response) => {
-    const rawTitle = response.headers.get("X-RSC-Title");
-    cachedTitle = rawTitle ? decodeURIComponent(rawTitle) : null;
+    cachedMeta = parseMetaHeader(response);
+    if (!cachedMeta) {
+      const rawTitle = response.headers.get("X-RSC-Title");
+      cachedTitle = rawTitle ? decodeURIComponent(rawTitle) : null;
+    }
     return deserializeResponse(response);
   });
 
   cache.set(url, {
     get title() { return cachedTitle; },
+    get meta() { return cachedMeta; },
     tree,
     expiresAt: Date.now() + ttl,
   });

@@ -136,13 +136,20 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         return '{"error":"Missing component in RSC message"}';
       }
       try {
-        const result = await rscHandler.handleRsc(
-          message.component,
-          message.props ?? {},
-          message.callbackSocket ?? null,
-          message.layouts ?? []
-        );
-        return JSON.stringify({ result });
+        const [result, metadata] = await Promise.all([
+          rscHandler.handleRsc(
+            message.component,
+            message.props ?? {},
+            message.callbackSocket ?? null,
+            message.layouts ?? []
+          ),
+          rscHandler.resolveMetadata(
+            message.component,
+            message.props ?? {},
+            message.callbackSocket ?? null
+          ),
+        ]);
+        return JSON.stringify({ result: { ...result, metadata } });
       } catch (err) {
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
@@ -193,6 +200,11 @@ type RscHandlerModule = {
     contentType: string,
     callbackSocket?: string | null
   ) => Promise<{ stream: ReadableStream }>;
+  resolveMetadata: (
+    component: string,
+    props: Record<string, unknown>,
+    callbackSocket?: string | null
+  ) => Promise<Record<string, unknown> | null>;
 };
 
 let rscHandler: RscHandlerModule | null = null;
@@ -236,14 +248,21 @@ async function handleRscStreamMessage(
   }
 
   try {
-    const { stream, clientChunks } = await rscHandler.handleRscStream(
-      message.component,
-      message.props ?? {},
-      message.callbackSocket ?? null,
-      message.layouts ?? []
-    );
+    const [{ stream, clientChunks }, metadata] = await Promise.all([
+      rscHandler.handleRscStream(
+        message.component,
+        message.props ?? {},
+        message.callbackSocket ?? null,
+        message.layouts ?? []
+      ),
+      rscHandler.resolveMetadata(
+        message.component,
+        message.props ?? {},
+        message.callbackSocket ?? null
+      ),
+    ]);
 
-    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks }));
+    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
     await Bun.sleep(0);
 
     const reader = stream.getReader();
@@ -292,15 +311,22 @@ async function handleRscHtmlStreamMessage(
   }
 
   try {
-    const { htmlStream, rscPayloadPromise, clientChunks, flushCallbacks } =
-      await rscHandler.handleRscHtmlStream(
-        message.component,
-        message.props ?? {},
-        message.callbackSocket ?? null,
-        message.layouts ?? []
-      );
+    const [{ htmlStream, rscPayloadPromise, clientChunks, flushCallbacks }, metadata] =
+      await Promise.all([
+        rscHandler.handleRscHtmlStream(
+          message.component,
+          message.props ?? {},
+          message.callbackSocket ?? null,
+          message.layouts ?? []
+        ),
+        rscHandler.resolveMetadata(
+          message.component,
+          message.props ?? {},
+          message.callbackSocket ?? null
+        ),
+      ]);
 
-    writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks }));
+    writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks, metadata }));
     await Bun.sleep(0);
 
     const reader = htmlStream.getReader();

@@ -107,9 +107,13 @@ class RscResponse implements Responsable
         $bridge = app(BunBridge::class);
         $generator = $bridge->rscStream($this->component, $this->props, $this->layouts);
 
-        // First yield is always the clientChunks array — read it eagerly
+        // First yield is always {clientChunks, metadata} — read it eagerly
         // so we can set proper headers on the StreamedResponse object.
-        $clientChunks = $generator->current();
+        $meta = $generator->current();
+        $clientChunks = $meta['clientChunks'] ?? [];
+
+        // Apply page metadata as viewData defaults (route.php viewData takes precedence)
+        $this->applyMetadataDefaults($meta['metadata'] ?? null);
 
         $headers = [
             'Content-Type' => 'text/x-component',
@@ -120,6 +124,12 @@ class RscResponse implements Responsable
 
         if (isset($this->viewData['title'])) {
             $headers[Header::X_RSC_TITLE] = rawurlencode($this->viewData['title']);
+        }
+
+        $metaData = $this->extractMetadata();
+
+        if ($metaData !== []) {
+            $headers[Header::X_RSC_META] = json_encode($metaData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         }
 
         return new StreamedResponse(function () use ($generator): void {
@@ -150,9 +160,12 @@ class RscResponse implements Responsable
         $bridge = app(BunBridge::class);
         $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts);
 
-        // First yield: {clientChunks: [...]}
+        // First yield: {clientChunks: [...], metadata: {...}}
         $meta = $generator->current();
         $clientChunks = $meta['clientChunks'] ?? [];
+
+        // Apply page metadata as viewData defaults (route.php viewData takes precedence)
+        $this->applyMetadataDefaults($meta['metadata'] ?? null);
 
         $url = $request->getRequestUri();
         $component = $this->component;
@@ -172,6 +185,13 @@ class RscResponse implements Responsable
         ])->render();
 
         [$shellHead, $shellTail] = explode($bodyMarker, $shell, 2);
+
+        // Inject metadata tags into <head> automatically — no blade changes needed
+        $metaTags = $this->buildMetaTags();
+
+        if ($metaTags !== '' && stripos($shellHead, '</head>') !== false) {
+            $shellHead = str_ireplace('</head>', $metaTags."\n</head>", $shellHead);
+        }
 
         return new StreamedResponse(function () use ($generator, $version, $url, $component, $clientChunks, $shellHead, $shellTail, $initialMarker, $scriptsMarker): void {
             while (ob_get_level() > 0) {
@@ -254,6 +274,91 @@ class RscResponse implements Responsable
     public function getVersion(): string
     {
         return $this->version ?? $this->resolveVersion();
+    }
+
+    /**
+     * Apply metadata from the RSC bundle as viewData defaults.
+     * Existing viewData (from route.php) takes precedence.
+     *
+     * @param  array<string, mixed>|null  $metadata
+     */
+    protected function applyMetadataDefaults(?array $metadata): void
+    {
+        if ($metadata === null) {
+            return;
+        }
+
+        foreach ($metadata as $key => $value) {
+            if (! isset($this->viewData[$key])) {
+                $this->viewData[$key] = $value;
+            }
+        }
+    }
+
+    /**
+     * Build HTML meta tags from viewData metadata keys.
+     *
+     * Recognises 'title' (→ <title>), 'description' (→ <meta name="description">),
+     * and any 'og:*' / 'twitter:*' keys (→ <meta property="..."> / <meta name="...">).
+     */
+    protected function buildMetaTags(): string
+    {
+        $tags = [];
+
+        if (isset($this->viewData['title'])) {
+            $tags[] = '    <title>'.e($this->viewData['title']).'</title>';
+        }
+
+        $metaKeys = ['description', 'keywords', 'author', 'robots'];
+
+        foreach ($metaKeys as $key) {
+            if (isset($this->viewData[$key])) {
+                $tags[] = '    <meta name="'.e($key).'" content="'.e($this->viewData[$key]).'">';
+            }
+        }
+
+        foreach ($this->viewData as $key => $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            if (str_starts_with($key, 'og:')) {
+                $tags[] = '    <meta property="'.e($key).'" content="'.e($value).'">';
+            } elseif (str_starts_with($key, 'twitter:')) {
+                $tags[] = '    <meta name="'.e($key).'" content="'.e($value).'">';
+            }
+        }
+
+        return implode("\n", $tags);
+    }
+
+    /**
+     * Extract metadata keys from viewData for the X-RSC-Meta header.
+     *
+     * @return array<string, string>
+     */
+    protected function extractMetadata(): array
+    {
+        $metadata = [];
+        $metaKeys = ['title', 'description', 'keywords', 'author', 'robots'];
+
+        foreach ($metaKeys as $key) {
+            if (isset($this->viewData[$key]) && is_string($this->viewData[$key])) {
+                $metadata[$key] = $this->viewData[$key];
+            }
+        }
+
+        foreach ($this->viewData as $key => $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            if (str_starts_with($key, 'og:') || str_starts_with($key, 'twitter:')) {
+                $metadata[$key] = $value;
+            }
+        }
+
+        return $metadata;
     }
 
     protected function resolveVersion(): string

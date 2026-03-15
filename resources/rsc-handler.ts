@@ -140,6 +140,36 @@ const emptyManifest = {
   },
 };
 
+// ─── Metadata Resolution ─────────────────────────────────────────────────────
+
+/**
+ * Resolve page metadata (title, description, etc.) from the RSC bundle.
+ * Supports both static `export const metadata` and dynamic `export function generateMetadata`.
+ */
+export async function resolveMetadata(
+  component: string,
+  props: Record<string, unknown>,
+  callbackSocket?: string | null
+): Promise<Record<string, unknown> | null> {
+  if (typeof rscModule.resolveMetadata !== "function") {
+    return null;
+  }
+
+  let cleanup: (() => void) | null = null;
+
+  if (callbackSocket) {
+    const client = new PhpCallbackClient();
+    await client.connect(callbackSocket);
+    cleanup = installPhp(client);
+  }
+
+  try {
+    return await rscModule.resolveMetadata(component, props);
+  } finally {
+    cleanup?.();
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**

@@ -17,4 +17,6 @@ final class Header
     public const X_RSC_CONTENT_TYPE = 'X-RSC-Content-Type';
 
     public const X_RSC_TITLE = 'X-RSC-Title';
+
+    public const X_RSC_META = 'X-RSC-Meta';
 }

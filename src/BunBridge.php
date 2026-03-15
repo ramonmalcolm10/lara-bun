@@ -220,7 +220,10 @@ class BunBridge
                     $type = $frame['type'] ?? '';
 
                     if ($type === 'stream-start') {
-                        yield $frame['clientChunks'] ?? [];
+                        yield [
+                            'clientChunks' => $frame['clientChunks'] ?? [],
+                            'metadata' => $frame['metadata'] ?? null,
+                        ];
 
                         continue;
                     }
@@ -263,7 +266,10 @@ class BunBridge
                         $type = $frame['type'] ?? '';
 
                         if ($type === 'stream-start') {
-                            yield $frame['clientChunks'] ?? [];
+                            yield [
+                                'clientChunks' => $frame['clientChunks'] ?? [],
+                                'metadata' => $frame['metadata'] ?? null,
+                            ];
                         } elseif ($type === 'stream-chunk') {
                             yield $frame['data'] ?? '';
                         } elseif ($type === 'stream-end') {
@@ -404,7 +410,7 @@ class BunBridge
                     $type = $frame['type'] ?? '';
 
                     if ($type === 'html-start') {
-                        yield ['clientChunks' => $frame['clientChunks'] ?? []];
+                        yield ['clientChunks' => $frame['clientChunks'] ?? [], 'metadata' => $frame['metadata'] ?? null];
 
                         continue;
                     }
@@ -446,7 +452,7 @@ class BunBridge
                         $type = $frame['type'] ?? '';
 
                         if ($type === 'html-start') {
-                            yield ['clientChunks' => $frame['clientChunks'] ?? []];
+                            yield ['clientChunks' => $frame['clientChunks'] ?? [], 'metadata' => $frame['metadata'] ?? null];
                         } elseif ($type === 'html-chunk') {
                             yield $frame['data'] ?? '';
                         } elseif ($type === 'html-end') {
