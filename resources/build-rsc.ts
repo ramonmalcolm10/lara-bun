@@ -230,7 +230,8 @@ for await (const path of glob.scan(sourceDir)) {
   if (
     path.startsWith("entry.") ||
     path.includes(".test.") ||
-    path.includes(".spec.")
+    path.includes(".spec.") ||
+    path.includes(".generated.")
   ) {
     continue;
   }
