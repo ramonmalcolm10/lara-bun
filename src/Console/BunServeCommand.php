@@ -19,6 +19,10 @@ class BunServeCommand extends Command
 
     private int $lastBuildTime = 0;
 
+    private int $consecutiveFailures = 0;
+
+    private const MAX_CONSECUTIVE_FAILURES = 5;
+
     public function handle(): int
     {
         $baseSocketPath = $this->option('socket') ?? config('bun.socket_path', '/tmp/bun-bridge.sock');
@@ -116,6 +120,7 @@ class BunServeCommand extends Command
 
             if ($currentBuildTime > $this->lastBuildTime) {
                 $this->lastBuildTime = $currentBuildTime;
+                $this->consecutiveFailures = 0;
                 $this->newLine();
                 $this->info('Build change detected — restarting worker...');
 
@@ -143,7 +148,18 @@ class BunServeCommand extends Command
                 proc_close($this->processes[0]);
 
                 if ($status['exitcode'] !== 0) {
-                    $this->warn("Worker exited with code {$status['exitcode']}, restarting...");
+                    $this->consecutiveFailures++;
+
+                    if ($this->consecutiveFailures >= self::MAX_CONSECUTIVE_FAILURES) {
+                        $this->error("Worker crashed {$this->consecutiveFailures} times consecutively. Stopping.");
+                        $this->error('Fix the error above and restart with: php artisan bun:serve');
+
+                        return self::FAILURE;
+                    }
+
+                    $this->warn("Worker exited with code {$status['exitcode']}, restarting ({$this->consecutiveFailures}/".self::MAX_CONSECUTIVE_FAILURES.')...');
+
+                    usleep(1_000_000 * $this->consecutiveFailures); // Back off: 1s, 2s, 3s...
 
                     $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
@@ -297,6 +313,7 @@ class BunServeCommand extends Command
 
                 if ($currentBuildTime > $this->lastBuildTime) {
                     $this->lastBuildTime = $currentBuildTime;
+                    $this->consecutiveFailures = 0;
                     $this->newLine();
                     $this->info('Build change detected — restarting all workers...');
 
@@ -332,7 +349,19 @@ class BunServeCommand extends Command
                 proc_close($process);
 
                 if ($status['exitcode'] !== 0) {
-                    $this->warn("Worker {$i} exited with code {$status['exitcode']}, restarting...");
+                    $this->consecutiveFailures++;
+
+                    if ($this->consecutiveFailures >= self::MAX_CONSECUTIVE_FAILURES) {
+                        $this->error("Workers crashed {$this->consecutiveFailures} times consecutively. Stopping.");
+                        $this->error('Fix the error above and restart with: php artisan bun:serve');
+                        $this->shutdownAll();
+
+                        return self::FAILURE;
+                    }
+
+                    $this->warn("Worker {$i} exited with code {$status['exitcode']}, restarting ({$this->consecutiveFailures}/".self::MAX_CONSECUTIVE_FAILURES.')...');
+
+                    usleep(1_000_000 * $this->consecutiveFailures);
 
                     $newProcess = $this->spawnWorker($bunPath, $workerPath, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 

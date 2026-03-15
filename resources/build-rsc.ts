@@ -35,6 +35,16 @@ try {
 
         const source = readFileSync(args.path, "utf-8");
 
+        // Detect directives before Babel strips them
+        const firstLine = source.split("\n")[0].trim();
+        const hasUseClient = firstLine === '"use client";' || firstLine === "'use client';";
+
+        // Only compile client components — server components run on the server
+        // and don't benefit from the React Compiler's memoization
+        if (!hasUseClient) {
+          return undefined;
+        }
+
         const result = await babel.transformAsync(source, {
           filename: args.path,
           plugins: [["babel-plugin-react-compiler", {}]],
@@ -50,8 +60,14 @@ try {
           return undefined;
         }
 
+        // Babel strips the "use client" directive — re-add it so Bun's
+        // bundler still recognises this as a client component
+        const code = result.code.startsWith('"use client"')
+          ? result.code
+          : `"use client";\n${result.code}`;
+
         return {
-          contents: result.code,
+          contents: code,
           loader: "jsx",
         };
       });
