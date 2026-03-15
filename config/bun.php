@@ -12,7 +12,7 @@ return [
     'rsc' => [
         'enabled' => env('BUN_RSC_ENABLED', false),
         'bundle' => env('BUN_RSC_BUNDLE', base_path('bootstrap/rsc/entry.rsc.js')),
-        'source_dir' => env('BUN_RSC_SOURCE_DIR', resource_path('js/rsc')),
+        'source_dir' => env('BUN_RSC_SOURCE_DIR', resource_path('js')),
         'client_build_dir' => env('BUN_RSC_CLIENT_BUILD_DIR', public_path('build/rsc')),
         'root_view' => env('BUN_RSC_ROOT_VIEW', 'lara-bun::rsc-app'),
         'callback_timeout' => 5,
