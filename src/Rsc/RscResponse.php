@@ -309,12 +309,20 @@ class RscResponse implements Responsable
             $tags[] = '    <title>'.e($this->viewData['title']).'</title>';
         }
 
-        $metaKeys = ['description', 'keywords', 'author', 'robots'];
+        $metaKeys = ['description', 'author', 'robots'];
 
         foreach ($metaKeys as $key) {
-            if (isset($this->viewData[$key])) {
+            if (isset($this->viewData[$key]) && is_string($this->viewData[$key])) {
                 $tags[] = '    <meta name="'.e($key).'" content="'.e($this->viewData[$key]).'">';
             }
+        }
+
+        // Keywords can be a string or array — join arrays with commas
+        if (isset($this->viewData['keywords'])) {
+            $keywords = is_array($this->viewData['keywords'])
+                ? implode(', ', $this->viewData['keywords'])
+                : $this->viewData['keywords'];
+            $tags[] = '    <meta name="keywords" content="'.e($keywords).'">';
         }
 
         foreach ($this->viewData as $key => $value) {
@@ -340,12 +348,18 @@ class RscResponse implements Responsable
     protected function extractMetadata(): array
     {
         $metadata = [];
-        $metaKeys = ['title', 'description', 'keywords', 'author', 'robots'];
+        $metaKeys = ['title', 'description', 'author', 'robots'];
 
         foreach ($metaKeys as $key) {
             if (isset($this->viewData[$key]) && is_string($this->viewData[$key])) {
                 $metadata[$key] = $this->viewData[$key];
             }
+        }
+
+        if (isset($this->viewData['keywords'])) {
+            $metadata['keywords'] = is_array($this->viewData['keywords'])
+                ? implode(', ', $this->viewData['keywords'])
+                : $this->viewData['keywords'];
         }
 
         foreach ($this->viewData as $key => $value) {
