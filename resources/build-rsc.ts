@@ -555,10 +555,10 @@ if (clientComponents.length === 0) {
 // a) SSR client build — builds client components for server-side HTML rendering
 mkdirSync(clientOutDir, { recursive: true });
 
+// Note: React Compiler is NOT applied to SSR builds.
+// The compiler's runtime (`react/compiler-runtime`) uses createContext,
+// which is unavailable under react-server conditions in the Bun worker.
 const ssrPlugins: BunPlugin[] = [packageAliasPlugin];
-if (reactCompilerPlugin) {
-  ssrPlugins.push(reactCompilerPlugin);
-}
 
 const ssrResult = await Bun.build({
   entrypoints: clientComponents.map((c) => c.absolutePath),
