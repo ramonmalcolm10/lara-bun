@@ -35,13 +35,10 @@ try {
 
         const source = readFileSync(args.path, "utf-8");
 
-        // Detect directives before Babel strips them
-        const firstLine = source.split("\n")[0].trim();
-        const hasUseClient = firstLine === '"use client";' || firstLine === "'use client';";
-
         // Only compile client components — server components run on the server
         // and don't benefit from the React Compiler's memoization
-        if (!hasUseClient) {
+        const trimmed = source.trimStart();
+        if (!trimmed.startsWith('"use client"') && !trimmed.startsWith("'use client'")) {
           return undefined;
         }
 
@@ -106,8 +103,11 @@ let aliasIndex = 0;
 function isClientFile(filePath: string): boolean {
   try {
     const content = readFileSync(filePath, "utf-8");
-    const firstLine = content.split("\n")[0].trim();
-    return firstLine === '"use client";' || firstLine === "'use client';";
+    const trimmed = content.trimStart();
+    // Handle both formatted and minified files:
+    // Formatted: "use client";\n...
+    // Minified: "use client";import*as t from"react";...
+    return trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'");
   } catch {
     return false;
   }
@@ -116,8 +116,8 @@ function isClientFile(filePath: string): boolean {
 function isServerActionFile(filePath: string): boolean {
   try {
     const content = readFileSync(filePath, "utf-8");
-    const firstLine = content.split("\n")[0].trim();
-    return firstLine === '"use server";' || firstLine === "'use server';";
+    const trimmed = content.trimStart();
+    return trimmed.startsWith('"use server"') || trimmed.startsWith("'use server'");
   } catch {
     return false;
   }
