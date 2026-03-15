@@ -61,12 +61,18 @@ if (existsSync(browserChunksPath)) {
 const ssrClientDir = join(bundleDir, "client");
 const ssrModules: Record<string, unknown> = {};
 
+// Load the SSR module map (moduleId -> filename) if available
+const ssrModuleMapPath = join(bundleDir, "ssr-module-map.json");
+const ssrModuleFileMap: Record<string, string> = existsSync(ssrModuleMapPath)
+  ? JSON.parse(readFileSync(ssrModuleMapPath, "utf-8"))
+  : {};
+
 if (ssrManifest) {
   for (const moduleId of Object.keys(ssrManifest.moduleMap)) {
-    // moduleId is like "./Counter.tsx" or "lara-bun/Link.tsx"
-    // SSR bundle uses basename only: client/Counter.js, client/Link.js
-    const name = basename(moduleId).replace(/\.(tsx|ts|jsx|js)$/, "");
-    const ssrBundlePath = join(ssrClientDir, `${name}.js`);
+    // Use the module map if available, otherwise fall back to basename
+    const fileName = ssrModuleFileMap[moduleId]
+      ?? basename(moduleId).replace(/\.(tsx|ts|jsx|js|mjs|cjs)$/, "") + ".js";
+    const ssrBundlePath = join(ssrClientDir, fileName);
 
     if (existsSync(ssrBundlePath)) {
       try {

@@ -366,10 +366,94 @@ const packageAliasPlugin: BunPlugin = {
   },
 };
 
+// Catch-all plugin for "use client" files from node_modules (e.g., next-themes).
+// The useClientPlugin only intercepts pre-discovered components. This handles
+// third-party libraries that the user imports directly in server components.
+const externalClientModules = new Set<string>();
+
+const useClientCatchAllPlugin: BunPlugin = {
+  name: "use-client-catch-all",
+  setup(build) {
+    build.onLoad({ filter: /\.(tsx|ts|jsx|js|mjs|cjs)$/ }, (args) => {
+      // Only intercept node_modules — user/package components are handled by useClientPlugin
+      if (!args.path.includes("node_modules")) {
+        return undefined;
+      }
+
+      // Already handled by useClientPlugin
+      if (clientAbsolutePaths.has(args.path)) {
+        return undefined;
+      }
+
+      if (!isClientFile(args.path)) {
+        return undefined;
+      }
+
+      // Use the bare module path as the moduleId (e.g., "next-themes")
+      const nodeModulesIndex = args.path.lastIndexOf("node_modules/");
+      const moduleId = nodeModulesIndex !== -1
+        ? args.path.slice(nodeModulesIndex + "node_modules/".length)
+        : args.path;
+
+      externalClientModules.add(args.path);
+
+      // Register as a client component for manifest generation
+      const info: ComponentInfo = {
+        name: moduleId,
+        importAlias: `_C${aliasIndex++}`,
+        relativePath: moduleId,
+        absolutePath: args.path,
+        isClient: true,
+      };
+
+      if (!clientModuleIds.has(moduleId)) {
+        clientComponents.push(info);
+        clientModuleIds.set(moduleId, info);
+        clientAbsolutePaths.add(args.path);
+      }
+
+      // Detect named exports from the original file to generate proper proxy exports
+      const source = readFileSync(args.path, "utf-8");
+      const namedExports: string[] = [];
+
+      // Match: export function Name, export const Name, export class Name, export { Name }
+      const exportMatches = source.matchAll(/export\s+(?:function|const|let|var|class)\s+(\w+)/g);
+      for (const m of exportMatches) {
+        namedExports.push(m[1]);
+      }
+
+      // Match: export { Foo, Bar } or export { Foo as Bar }
+      const braceMatches = source.matchAll(/export\s*\{([^}]+)\}/g);
+      for (const m of braceMatches) {
+        const names = m[1].split(",").map((s) => {
+          const parts = s.trim().split(/\s+as\s+/);
+          return parts[parts.length - 1].trim();
+        });
+        namedExports.push(...names.filter((n) => n && n !== "default"));
+      }
+
+      const proxyExports = namedExports
+        .map((name) => `export const ${name} = proxy["${name}"];`)
+        .join("\n");
+
+      return {
+        contents: `
+import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";
+const proxy = createClientModuleProxy("${moduleId}");
+export default proxy;
+${proxyExports}
+`,
+        loader: "js",
+      };
+    });
+  },
+};
+
 const serverPlugins: BunPlugin[] = [packageAliasPlugin];
 if (clientComponents.length > 0) {
   serverPlugins.push(useClientPlugin);
 }
+serverPlugins.push(useClientCatchAllPlugin);
 
 // Generate server entry that imports all components (client ones will be proxied)
 // Only import user-space server/client components — package client components
@@ -529,6 +613,17 @@ if (!serverResult.success) {
 
 console.log(`Built server bundle: ${join(outDir, "entry.rsc.js")}`);
 
+if (externalClientModules.size > 0) {
+  console.log(`Discovered ${externalClientModules.size} external client module(s):`);
+  for (const mod of externalClientModules) {
+    const nodeModulesIndex = mod.lastIndexOf("node_modules/");
+    const shortPath = nodeModulesIndex !== -1
+      ? mod.slice(nodeModulesIndex + "node_modules/".length)
+      : mod;
+    console.log(`  ${shortPath}`);
+  }
+}
+
 // ─── Action Manifest ────────────────────────────────────────────────────────
 
 if (actionFiles.length > 0) {
@@ -579,6 +674,30 @@ if (!ssrResult.success) {
 }
 
 console.log(`Built SSR client bundles: ${clientOutDir}/`);
+
+// Generate SSR module map — maps moduleId to the actual SSR output filename
+// Needed because external client modules (e.g. next-themes) have paths like
+// "next-themes/dist/index.mjs" where basename alone would be ambiguous.
+const ssrFileMap: Record<string, string> = {};
+
+for (const output of ssrResult.outputs) {
+  const outputName = basename(output.path).replace(/\.[^.]+$/, "");
+
+  // Find the client component whose entry produced this output
+  for (const c of clientComponents) {
+    const entryName = basename(c.absolutePath).replace(/\.[^.]+$/, "");
+
+    if (entryName === outputName) {
+      ssrFileMap[c.relativePath] = basename(output.path);
+    }
+  }
+}
+
+writeFileSync(
+  join(outDir, "ssr-module-map.json"),
+  JSON.stringify(ssrFileMap, null, 2)
+);
+console.log(`Generated: ${join(outDir, "ssr-module-map.json")}`);
 
 // b) Browser client build — builds client components + hydration entry for browser
 mkdirSync(browserOutDir, { recursive: true });
