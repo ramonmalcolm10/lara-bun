@@ -112,6 +112,12 @@ interface PageRouteInfo {
   hasCatchAll: boolean;
 }
 
+interface RouteManifestEntry {
+  urlPattern: string;
+  staticPaths?: Record<string, string[]>;
+  where?: Record<string, string[]>;
+}
+
 const pageMetadata: PageMetadataInfo[] = [];
 const pageRoutes: PageRouteInfo[] = [];
 
@@ -720,6 +726,36 @@ console.log(`Generated: ${entryPath}`);
 // ─── Generate Typed Routes ──────────────────────────────────────────────────
 
 if (pageRoutes.length > 0) {
+  // Fetch route manifest from PHP for staticPaths and where constraints
+  let routeManifest: RouteManifestEntry[] = [];
+
+  try {
+    const proc = Bun.spawn(
+      ["php", "artisan", "rsc:route-manifest", "--no-interaction"],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
+    );
+
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode === 0) {
+      routeManifest = JSON.parse(output.trim());
+    } else {
+      console.warn("Warning: rsc:route-manifest failed. Falling back to string params.");
+    }
+  } catch {
+    console.warn("Warning: Could not run rsc:route-manifest. Falling back to string params.");
+  }
+
+  // Build a lookup from URL pattern → manifest entry
+  const manifestByPattern = new Map<string, RouteManifestEntry>();
+  for (const entry of routeManifest) {
+    // Normalize: PHP uses {slug}, TS uses [slug]
+    const tsPattern = entry.urlPattern
+      .replace(/\{(\w+)\}/g, "[$1]");
+    manifestByPattern.set(tsPattern, entry);
+  }
+
   // Sort routes for stable output
   const sorted = [...pageRoutes].sort((a, b) => a.urlPattern.localeCompare(b.urlPattern));
 
@@ -728,8 +764,20 @@ if (pageRoutes.length > 0) {
       if (r.params.length === 0) {
         return `  '${r.urlPattern}': Record<string, never>;`;
       }
+
+      const manifest = manifestByPattern.get(r.urlPattern);
       const paramTypes = r.params
-        .map((p) => `${p}: string`)
+        .map((p) => {
+          // Check for known values from staticPaths or where constraints
+          const values = manifest?.staticPaths?.[p]
+            ?? manifest?.staticPaths?.["_default"]
+            ?? manifest?.where?.[p];
+
+          if (values && values.length > 0) {
+            return `${p}: ${values.map((v) => `'${v}'`).join(" | ")}`;
+          }
+          return `${p}: string`;
+        })
         .join("; ");
       return `  '${r.urlPattern}': { ${paramTypes} };`;
     })

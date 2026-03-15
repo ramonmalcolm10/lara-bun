@@ -11,6 +11,7 @@ use LaraBun\Console\BunServeCommand;
 use LaraBun\Console\RscActionManifestCommand;
 use LaraBun\Console\RscBuildCommand;
 use LaraBun\Console\RscPagesCommand;
+use LaraBun\Console\RscRouteManifestCommand;
 use LaraBun\Rsc\CallableRegistry;
 use LaraBun\Rsc\PageRouteRegistrar;
 use LaraBun\Rsc\PageScanner;
@@ -81,6 +82,7 @@ class BunServiceProvider extends ServiceProvider
                 RscActionManifestCommand::class,
                 RscBuildCommand::class,
                 RscPagesCommand::class,
+                RscRouteManifestCommand::class,
             ]);
         }
     }
