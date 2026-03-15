@@ -838,10 +838,11 @@ export function route<T extends RoutePath>(
   const domain = domains[path];
 
   if (domain) {
-    const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+    const isBrowser = typeof window !== 'undefined';
+    const currentHost = isBrowser ? window.location.hostname : '';
 
-    if (currentHost !== domain) {
-      const scheme = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+    if (!isBrowser || currentHost !== domain) {
+      const scheme = isBrowser ? window.location.protocol : 'http:';
       return \`\${scheme}//\${domain}\${url}\`;
     }
   }
