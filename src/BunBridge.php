@@ -1102,14 +1102,40 @@ class BunBridge
             );
         }
 
-        if (! socket_connect($socket, $path)) {
-            $error = socket_strerror(socket_last_error($socket));
-            socket_close($socket);
+        // Use non-blocking connect with a 3-second timeout to avoid hanging
+        // when the socket file exists but the worker hasn't started listening yet.
+        socket_set_nonblock($socket);
+        $connected = @socket_connect($socket, $path);
 
-            throw new RuntimeException(
-                "Failed to connect to Bun socket: {$error}. Run: php artisan bun:serve"
-            );
+        if (! $connected) {
+            $error = socket_last_error($socket);
+
+            // EINPROGRESS (115) or EALREADY (114) means connection is in progress
+            if ($error === SOCKET_EINPROGRESS || $error === SOCKET_EALREADY || $error === 0) {
+                $write = [$socket];
+                $read = null;
+                $except = null;
+
+                $ready = socket_select($read, $write, $except, 3);
+
+                if ($ready === false || $ready === 0) {
+                    socket_close($socket);
+
+                    throw new RuntimeException(
+                        "Bun worker not ready (connection timed out). Is 'php artisan bun:serve' running?"
+                    );
+                }
+            } else {
+                $errorMsg = socket_strerror($error);
+                socket_close($socket);
+
+                throw new RuntimeException(
+                    "Failed to connect to Bun socket: {$errorMsg}. Run: php artisan bun:serve"
+                );
+            }
         }
+
+        socket_set_block($socket);
 
         $timeout = ['sec' => 10, 'usec' => 0];
         socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, $timeout);
