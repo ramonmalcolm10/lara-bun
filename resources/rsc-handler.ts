@@ -231,13 +231,64 @@ export async function handleRscHtmlStream(
   htmlStream: ReadableStream;
   rscPayloadPromise: Promise<string>;
   clientChunks: string[];
+  flushCallbacks?: () => void;
 }> {
   let cleanup: (() => void) | null = null;
+  let flushCallbacks: (() => void) | undefined;
 
   if (callbackSocket) {
+    // Connect immediately so PHP's callback acceptance doesn't block,
+    // but defer php() call execution to enable Suspense streaming.
+    // React sees unresolved Promises, hits Suspense boundaries, and emits
+    // fallback HTML first. After the first HTML chunk, flushCallbacks()
+    // sends queued calls to PHP and results stream in progressively.
     const client = new PhpCallbackClient();
     await client.connect(callbackSocket);
-    cleanup = installPhp(client);
+
+    const pendingCalls: Array<{
+      fn: string;
+      args: unknown[];
+      resolve: (value: unknown) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    let flushed = false;
+
+    const flush = () => {
+      if (flushed) return;
+      flushed = true;
+      for (const call of pendingCalls) {
+        client.call(call.fn, ...call.args).then(call.resolve, call.reject);
+      }
+      pendingCalls.length = 0;
+    };
+
+    // Auto-flush after 100ms to prevent deadlock when no Suspense boundary
+    // exists. Once flushed, php() calls execute directly without queueing.
+    const autoFlushTimer = setTimeout(flush, 100);
+
+    const deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
+      if (flushed) {
+        return client.call(functionName, ...args);
+      }
+      return new Promise((resolve, reject) => {
+        pendingCalls.push({ fn: functionName, args, resolve, reject });
+      });
+    };
+    (globalThis as any).php = deferredPhpFn;
+
+    flushCallbacks = () => {
+      clearTimeout(autoFlushTimer);
+      flush();
+    };
+
+    cleanup = () => {
+      clearTimeout(autoFlushTimer);
+      flush();
+      try { client.disconnect(); } catch {}
+      if ((globalThis as any).php === deferredPhpFn) {
+        delete (globalThis as any).php;
+      }
+    };
   }
 
   // Render Flight as a stream (progressive — Suspense boundaries emit lazily)
@@ -283,10 +334,10 @@ export async function handleRscHtmlStream(
         cleanupFn();
       },
     });
-    return { htmlStream: wrappedStream, rscPayloadPromise, clientChunks: browserChunks };
+    return { htmlStream: wrappedStream, rscPayloadPromise, clientChunks: browserChunks, flushCallbacks };
   }
 
-  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks };
+  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks, flushCallbacks };
 }
 
 // ─── Action Handler (server actions) ──────────────────────────────────────────
