@@ -119,6 +119,11 @@ try {
 
 // ─── Discover User Components ───────────────────────────────────────────────
 
+if (!existsSync(sourceDir)) {
+  mkdirSync(sourceDir, { recursive: true });
+  console.log(`Created source directory: ${sourceDir}`);
+}
+
 for await (const path of glob.scan(sourceDir)) {
   if (
     path.startsWith("entry.") ||
