@@ -126,8 +126,18 @@ class PageRouteRegistrar
 
         $route->middleware(array_unique($middleware));
 
-        // Domain routing via route.php ->domain()
+        // Domain routing — page-level route.php wins, then fall back to directory-level
         $domain = $pageConfig instanceof PageRoute ? $pageConfig->getDomain() : null;
+
+        if ($domain === null) {
+            foreach ($page->directoryConfigPaths as $configPath) {
+                $dirConfig = $this->loadConfig($configPath);
+
+                if ($dirConfig instanceof PageRoute && $dirConfig->getDomain() !== null) {
+                    $domain = $dirConfig->getDomain();
+                }
+            }
+        }
 
         if ($domain !== null) {
             $route->domain($domain);
