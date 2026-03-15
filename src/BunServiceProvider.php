@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\HtmlString;
 use Illuminate\Support\ServiceProvider;
+use LaraBun\Console\BunDevCommand;
 use LaraBun\Console\BunServeCommand;
 use LaraBun\Console\RscActionManifestCommand;
 use LaraBun\Console\RscBuildCommand;
@@ -75,6 +76,7 @@ class BunServiceProvider extends ServiceProvider
             ], 'lara-bun-views');
 
             $this->commands([
+                BunDevCommand::class,
                 BunServeCommand::class,
                 RscActionManifestCommand::class,
                 RscBuildCommand::class,
