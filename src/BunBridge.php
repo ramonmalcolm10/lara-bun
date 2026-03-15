@@ -157,7 +157,7 @@ class BunBridge
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 
-            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 30);
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';
 
             // Accept callback connection if needed
@@ -341,7 +341,7 @@ class BunBridge
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 
-            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 30);
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';
 
             // Accept callback connection if needed
@@ -516,7 +516,7 @@ class BunBridge
                 'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 
-            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 30);
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';
 
             // Accept callback connection if needed
