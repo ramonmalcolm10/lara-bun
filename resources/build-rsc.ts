@@ -14,6 +14,55 @@ import { join, basename, resolve } from "node:path";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import type { BunPlugin } from "bun";
 
+// ─── React Compiler Plugin ──────────────────────────────────────────────────
+// Opt-in: install `babel-plugin-react-compiler` and `@babel/core` to enable.
+// Transforms client components with the React Compiler for automatic memoization.
+
+let reactCompilerPlugin: BunPlugin | null = null;
+
+try {
+  const babel = await import("@babel/core");
+  await import("babel-plugin-react-compiler");
+
+  reactCompilerPlugin = {
+    name: "react-compiler",
+    setup(build) {
+      build.onLoad({ filter: /\.(tsx|jsx)$/ }, async (args) => {
+        // Skip node_modules
+        if (args.path.includes("node_modules")) {
+          return undefined;
+        }
+
+        const source = readFileSync(args.path, "utf-8");
+
+        const result = await babel.transformAsync(source, {
+          filename: args.path,
+          plugins: [["babel-plugin-react-compiler", {}]],
+          presets: [
+            ["@babel/preset-typescript", { isTSX: true, allExtensions: true }],
+          ],
+          parserOpts: {
+            plugins: ["jsx", "typescript"],
+          },
+        });
+
+        if (!result?.code) {
+          return undefined;
+        }
+
+        return {
+          contents: result.code,
+          loader: "jsx",
+        };
+      });
+    },
+  };
+
+  console.log("React Compiler enabled — client components will be auto-optimized.");
+} catch {
+  // babel-plugin-react-compiler not installed — skip silently
+}
+
 const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js/rsc");
 const outDir = process.argv[3] ?? join(process.cwd(), "bootstrap/rsc");
 const clientOutDir = join(outDir, "client");
@@ -490,12 +539,17 @@ if (clientComponents.length === 0) {
 // a) SSR client build — builds client components for server-side HTML rendering
 mkdirSync(clientOutDir, { recursive: true });
 
+const ssrPlugins: BunPlugin[] = [packageAliasPlugin];
+if (reactCompilerPlugin) {
+  ssrPlugins.push(reactCompilerPlugin);
+}
+
 const ssrResult = await Bun.build({
   entrypoints: clientComponents.map((c) => c.absolutePath),
   outdir: clientOutDir,
   target: "bun",
   naming: "[name].[ext]",
-  plugins: [packageAliasPlugin],
+  plugins: ssrPlugins,
   external: ["react", "react-dom"],
   define: {
     "process.env.NODE_ENV": '"production"',
@@ -581,6 +635,9 @@ ${exports}
 const browserPlugins: BunPlugin[] = [packageAliasPlugin];
 if (actionFiles.length > 0) {
   browserPlugins.push(useServerPlugin);
+}
+if (reactCompilerPlugin) {
+  browserPlugins.push(reactCompilerPlugin);
 }
 
 const browserResult = await Bun.build({
