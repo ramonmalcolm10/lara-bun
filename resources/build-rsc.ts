@@ -823,7 +823,7 @@ for (const c of clientComponents) {
   clientManifest[c.relativePath] = {
     id: c.relativePath,
     chunks: [],
-    name: "*",
+    name: "default",
   };
 }
 
